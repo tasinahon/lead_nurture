@@ -1,137 +1,127 @@
-
-
-from __future__ import annotations
-
 import os
+import json
 from datetime import datetime
 from typing import Dict, Any, List
 
-from dotenv import load_dotenv
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.agents import create_tool_calling_agent
-from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable
-from langchain.tools import tool
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import JsonOutputParser
+from langchain_google_genai import ChatGoogleGenerativeAI
 
 from db.session import get_session
-from db.database_schema import EmailDraft, Email, Profile, Communication
+from db.database_schema import Client, Profile, EmailDraft, MessageDraft
+
+from pydantic import BaseModel
 
 
-load_dotenv()
+class PersonalizedOutput(BaseModel):
+    subject: str
+    body_markdown: str
 
 
-LLM_DEFAULT = ChatGoogleGenerativeAI(
-    model="gemini-1.5-flash",
-    temperature=0.3,
-    google_api_key=os.getenv("GOOGLE_API_KEY"),
-)
-
-
-PERSONALISER_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", 
-     "You are an expert B2B email copywriter.\n"
-     "• Greet using <<fname>>.\n"
-     "• Match tone (<<tone>>).\n"
-     "• Translate if needed to <<language>>.\n"
-     "• Preserve URLs, markdown formatting, and tracking links.\n"
-     "Only output the final personalized email body in markdown."
-    ),
-    ("human", "{input}"),
-    ("placeholder", "{agent_scratchpad}"),
-])
-
-
-@tool
-def tone_shift(body: str, tone: str = "friendly") -> str:
-    """Rewrite email body in requested tone."""
-    prompt = f"Rewrite the email below in a {tone} tone without changing meaning:\n---\n{body}"
-    return LLM_DEFAULT.predict(prompt).strip()
-
-TOOLS = [tone_shift]
-
-
-class EmailPersonaliserAgent(Runnable):
-    """Generates a personalized Email from an EmailDraft and Profile."""
-
+class PersonaliserAgent(Runnable):
     def __init__(self):
-        self._sf = get_session
-        self.llm = LLM_DEFAULT
-        self.agent = create_tool_calling_agent(
-            self.llm,
-            TOOLS,
-            PERSONALISER_PROMPT,
-        )
+        self.llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.3)
+        self.session_factory = get_session
+        self.parser = JsonOutputParser(pydantic_schema=PersonalizedOutput)
+        self.prompt = self._build_prompt()
+
+    def _build_prompt(self):
+        return ChatPromptTemplate.from_messages([
+            ("system", """
+                You are a professional AI assistant for personalising and refining email/message drafts.
+
+                You will receive:
+                - A draft (subject + body)
+                - Client profile
+                - Optional feedback from a reviewer
+
+                Your task:
+                1. Personalise the draft using the client's profile:
+                - Greet by name
+                - Mention company/category if relevant
+                - Use at least 1 interest hook
+                - Include engagement_times suggestion if present
+                - If language isn't English, translate the message
+
+                2. If feedback is provided:
+                - Respect the tone and intent
+                - Improve clarity or rewrite sections as per suggestion
+                - DO NOT alter core message unless requested
+
+                3. Keep the result under **150 words** and make it feel human-written.
+
+                Output strictly as JSON:
+                {
+                "subject": "...",
+                "body_markdown": "..."
+                }
+
+                No commentary or formatting outside JSON.
+                {format_instructions}
+                """),
+                            ("user", "{input_context}")
+                        ])
 
     def _call(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
         draft_id = inputs["draft_id"]
+        channel = inputs.get("channel", "email").lower()
+        feedback_text = inputs.get("feedback", "")
 
-        with self._sf() as session:
-            draft: EmailDraft = session.get(EmailDraft, draft_id)
-            if not draft:
-                raise ValueError(f"EmailDraft id={draft_id} not found")
+        with self.session_factory() as session:
+            draft_model = EmailDraft if channel == "email" else MessageDraft
+            draft = session.get(draft_model, draft_id)
+            client = session.get(Client, draft.client_id)
+            profile = session.query(Profile).filter_by(client_id=client.client_id).first()
 
-            
-            campaign_id = draft.campaign_id
+        input_context = {
+            "name": client.full_name,
+            "company": client.company,
+            "category": client.category,
+            "interests": profile.interests.split(",") if profile.interests else [],
+            "engagement_times": profile.engagement_times,
+            "preferred_language": profile.preferred_language,
+            "original_subject": getattr(draft, "subject", ""),
+            "original_body": draft.body_markdown if channel == "email" else draft.message_text,
+        }
 
-            profile: Profile = (
-                session.query(Profile)
-                .filter_by(client_id=campaign_id)
-                .first()
-            )
-            if not profile:
-                raise ValueError(f"No profile found for campaign_id={campaign_id}")
+        if feedback_text:
+            input_context["feedback"] = feedback_text
 
-            
-            from db.database_schema import Client
-            client = session.get(Client, profile.client_id)
-            full_name = client.full_name if client and client.full_name else "there"
+        formatted = self.prompt.format_prompt(
+            input_context=json.dumps(input_context, ensure_ascii=False),
+            format_instructions=self.parser.get_format_instructions()
+        ).to_string()
 
-            comms: List[Communication] = (
-                session.query(Communication)
-                .filter_by(client_id=profile.client_id)
-                .order_by(Communication.timestamp.desc())
-                .limit(5)
-                .all()
-            )
+        raw_output = self.llm.invoke(formatted)
+        raw_content = raw_output.content.strip()
 
-
-        first_name = full_name.split()[0] if full_name else "there"
-        preferred_language = profile.preferred_language or "English"
-        preferred_tone = profile.preferred_contact or "friendly"
-        recent_msgs = [c.content for c in comms]
-
-        
-        agent_input = (
-            f"<<fname>>: {first_name}\n"
-            f"<<tone>>: {preferred_tone}\n"
-            f"<<language>>: {preferred_language}\n"
-            f"Recent Messages: {recent_msgs}\n"
-            "---\n"
-            f"{draft.body_markdown}"
-        )
+        # Remove triple backtick code block markers if present
+        if raw_content.startswith("```"):
+            cleaned = raw_content.split("\n", 1)[1].rsplit("\n", 1)[0]
+        else:
+            cleaned = raw_content
 
         try:
-            raw = self.agent.invoke({"input": agent_input})
-            body_final = raw.get("output") if isinstance(raw, dict) else str(raw)
-        except Exception:
-            body_final = draft.body_markdown
-
-        # save Email
-        with self._sf() as session:
-            email = Email(
-                draft_id=draft.draft_id,
-                personalized_body=body_final.strip(),
-                is_final=False,
-                approved_at=None
+            parsed_dict = json.loads(cleaned)
+            parsed = PersonalizedOutput(**parsed_dict)
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            # Fallback: return raw content as body
+            parsed = PersonalizedOutput(
+                subject=getattr(draft, "subject", "") or "Subject",
+                body_markdown=cleaned
             )
-            session.add(email)
-            session.commit()
-            session.refresh(email)
 
-        return {"status": "personalised", "email_id": email.email_id}
+        return {
+            "status": "personalised",
+            "channel": channel,
+            "subject": parsed.subject,
+            "body_markdown": parsed.body_markdown
+        }
 
     def invoke(self, input: Dict[str, Any], config=None) -> Dict[str, Any]:
         return self._call(input)
+
 
 
 

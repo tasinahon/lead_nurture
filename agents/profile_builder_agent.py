@@ -84,19 +84,15 @@ class ProfileBuilderAgent(Runnable):
                 .limit(10)
                 .all()
             )
-            qna: List[ContextQuestion] = (
-                session.query(ContextQuestion)
-                .filter_by(client_id=cid)
-                .all()
-            )
 
         context = {
-            "scraped_data": [json.loads(row.raw_json) for row in scraped],
-            "context_qna": [{"q": qa.question, "a": qa.answer} for qa in qna if qa.answer],
+            "scraped_data": [json.loads(row.raw_json) for row in scraped]
         }
 
         return json.dumps(context, ensure_ascii=False)[:15000]
 
+
+    
     def update_profile(self, cid: int, data: ProfileSchema, embedding: List[float]):
         with self.session_factory() as session:
             profile = session.query(Profile).filter_by(client_id=cid).one_or_none()
@@ -105,29 +101,17 @@ class ProfileBuilderAgent(Runnable):
 
             profile.summary = data.summary
             profile.interests = ",".join(data.interests)
-            profile.personality_vector = json.dumps(embedding)
             profile.preferred_language = data.preferred_language
             profile.preferred_contact = data.preferred_contact
             profile.engagement_times = data.engagement_times
+            profile.full_text = data.full_text  # ⬅️ new line
+            profile.personality_vector = json.dumps(embedding)
 
             session.add(profile)
             session.commit()
             session.refresh(profile)
-
-            with open("agent.txt", "a", encoding="utf-8") as f:
-                f.write(f"""
-======== Profile Update ========
-Client ID: {cid}
-Summary: {data.summary}
-Interests: {", ".join(data.interests)}
-Preferred Language: {data.preferred_language}
-Preferred Contact: {data.preferred_contact}
-Engagement Times: {data.engagement_times}
-Embedding Vector Length: {len(embedding)}
-================================
-""")
-
         return profile.profile_id
+
 
     def _call(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
         cid = inputs["client_id"]

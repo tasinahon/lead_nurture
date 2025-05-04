@@ -3,13 +3,20 @@ from graph.strategy_graph import strategy_graph
 from sqlmodel import Session, select
 from fastapi import APIRouter
 from agents.scraper_agent import ScraperAgent 
+from agents.campaign_planner_agent import CampaignPlannerAgent
+from agents.draft_email_agent import EmailDraftAgent
+from agents.draft_message_agent import DraftMessageAgent
+from agents.redraft_agent import RedraftAgent
+from agents.email_personaliser_agent import PersonaliserAgent
+from agents.message_personaliser_agent import MessagePersonaliserAgent
+from agents.profile_update_agent import ProfileUpdateAgent
 from graph.profile_graph import profile_graph
-from graph.personalise_graph import personalise_phase
+# from graph.personalise_graph import personalise_phase
 from typing import List
 from datetime import datetime
 from db.session import get_session
 from graph.scrape_graph import flow
-from graph.redraft_graph import redraft_phase
+# from graph.redraft_graph import redraft_phase
 import logging
 from db.Pydantic_DataModels import (
     ContextQuestionBatchCreate, User, UserCreate,
@@ -27,7 +34,9 @@ from db.Pydantic_DataModels import (
     Feedback, FeedbackCreate,
     ContextQuestion, ContextQuestionCreate,
     ScrapedData, ScrapedDataCreate,
-    Communication, CommunicationCreate
+    Communication, CommunicationCreate,
+    ClientListLink,ClientList,
+    ClientListCreate,InitialStrategyCreate,InitialStrategy
 )
 from db.database_schema import (
     User as UserModel,
@@ -45,7 +54,11 @@ from db.database_schema import (
     Feedback as FeedbackModel,
     ContextQuestion as ContextQuestionModel,
     ScrapedData as ScrapedDataModel,
-    Communication as CommunicationModel
+    Communication as CommunicationModel,
+    ClientList as ClientListModel,
+    ClientListLink as ClientListLinkModel,
+    InitialStrategy as InitialStrategyModel,
+    CampaignPlan as CampaignPlanModel
 )
 
 # router = FastAPI()
@@ -313,13 +326,13 @@ def read_feedbacks(email_id: int, session: Session = Depends(get_session)):
 
 
 
-@router.post("/emails/{email_id}/feedbacks/", response_model=Feedback)
+@router.post("/emails/{email_id}/feedbacks/", response_model=FeedbackModel)
 async def create_feedback(
     email_id: int,
     feedback: FeedbackCreate,
     session: Session = Depends(get_session)
 ):
-    
+    # 1. Save feedback entry
     db_feedback = FeedbackModel(
         email_id=email_id,
         user_id=feedback.user_id,
@@ -333,41 +346,64 @@ async def create_feedback(
     session.refresh(db_feedback)
 
     
-    if feedback.stage == "draft":
-        draft = session.get(EmailDraftModel, email_id) or session.get(MessageDraftModel, email_id)
+    draft = session.get(EmailDraftModel, email_id)
+    is_email = True
+
+    if not draft:
+        draft = session.get(MessageDraftModel, email_id)
         if not draft:
             raise HTTPException(status_code=404, detail="Draft not found")
+        is_email = False
 
-        campaign_id = draft.campaign_id
-        strategy = session.exec(select(StrategyModel).where(StrategyModel.campaign_id == campaign_id)).first()
+    
+    if feedback.stage == "draft":
+        strategy = session.exec(
+            select(InitialStrategyModel).where(InitialStrategyModel.client_id == draft.contact_id)
+        ).first()
         if not strategy:
-            raise HTTPException(status_code=404, detail="Strategy not found")
-        channel = strategy.channel.lower()
+            raise HTTPException(status_code=404, detail="Initial strategy not found")
 
-        redraft_phase.invoke({
-            "draft_id": email_id,
-            "needs_rewrite": feedback.wants_change,
-            "fb_comments": feedback.comments,
-            "channel": channel
-        })
+        channel = strategy.engagement_channel.lower()
+
+        if feedback.wants_change:
+            RedraftAgent().invoke({
+                "draft_id": draft.draft_id,
+                "fb_comments": feedback.comments,
+                "channel": channel
+            })
 
     
     elif feedback.stage == "approved":
-        draft = session.get(EmailDraftModel, email_id)
-        is_email = True
-        if not draft:
-            draft = session.get(MessageDraftModel, email_id)
-            if not draft:
-                raise HTTPException(status_code=404, detail="Draft not found")
-            is_email = False
-
-        
-        if is_email:
-            from agents.email_personaliser_agent import EmailPersonaliserAgent
-            EmailPersonaliserAgent().invoke({"draft_id": draft.draft_id})
+        if feedback.wants_change:
+            if is_email:
+                PersonaliserAgent().invoke({
+                    "draft_id": draft.draft_id,
+                    "feedback": feedback.comments
+                })
+            else:
+                MessagePersonaliserAgent().invoke({
+                    "draft_id": draft.draft_id,
+                    "feedback": feedback.comments
+                })
         else:
-            from agents.message_personaliser_agent import MessagePersonaliserAgent
-            MessagePersonaliserAgent().invoke({"draft_id": draft.draft_id})
+            if is_email:
+                db_email = EmailModel(
+                    draft_id=draft.draft_id,
+                    personalized_body=draft.body_markdown,
+                    is_final=True,
+                    approved_at=datetime.utcnow()
+                )
+                session.add(db_email)
+            else:
+                db_msg = MessageModel(
+                    draft_id=draft.draft_id,
+                    personalized_text=draft.message_text,
+                    is_final=True,
+                    approved_at=datetime.utcnow()
+                )
+                session.add(db_msg)
+
+            session.commit()
 
     else:
         raise HTTPException(status_code=400, detail="Invalid feedback stage")
@@ -492,18 +528,376 @@ def create_communication(
         select(CampaignModel).where(CampaignModel.client_id == client_id)
     ).first()
 
-    if campaign:
-        background_tasks.add_task(
-            strategy_graph.invoke,
-            {"client_id": client_id, "campaign_id": campaign.campaign_id}   
-        )
-    else:
-        print(f" No campaign found for client_id={client_id}, strategy_graph not invoked.")
+    # if campaign:
+    #     background_tasks.add_task(
+    #         strategy_graph.invoke,
+    #         {"client_id": client_id, "campaign_id": campaign.campaign_id}   
+    #     )
+    # else:
+    #     print(f" No campaign found for client_id={client_id}, strategy_graph not invoked.")
 
     return db_communication
+
+
+# 1. Get All Client Lists for a User
+@router.get("/users/{user_id}/client-lists/", response_model=List[ClientList])
+def read_client_lists(user_id: int, session: Session = Depends(get_session)):
+    user = session.get(UserModel, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return session.exec(select(ClientListModel).where(ClientListModel.user_id == user_id)).all()
+
+#  Create a New Client List
+@router.post("/users/{user_id}/client-lists/", response_model=ClientList)
+def create_client_list(user_id: int, list_data: ClientListCreate, session: Session = Depends(get_session)):
+    user = session.get(UserModel, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    db_list = ClientListModel(**list_data.dict(), user_id=user_id)
+    session.add(db_list)
+    session.commit()
+    session.refresh(db_list)
+    return db_list
+
+#  Add a Client to a List
+@router.post("/client-lists/{list_id}/add-client/{client_id}")
+def add_client_to_list(list_id: int, client_id: int, session: Session = Depends(get_session)):
+    client = session.get(ClientModel, client_id)
+    clist = session.get(ClientListModel, list_id)
+    if not client or not clist:
+        raise HTTPException(status_code=404, detail="Client or List not found")
+
+    link = ClientListLinkModel(client_id=client_id, list_id=list_id)
+    session.add(link)
+    session.commit()
+    return {"status": "linked", "client_id": client_id, "list_id": list_id}
+
+# Get All Clients in a Client List
+@router.get("/client-lists/{list_id}/clients/", response_model=List[Client])
+def get_clients_in_list(list_id: int, session: Session = Depends(get_session)):
+    links = session.exec(select(ClientListLinkModel).where(ClientListLinkModel.list_id == list_id)).all()
+    client_ids = [l.client_id for l in links]
+    return session.exec(select(ClientModel).where(ClientModel.client_id.in_(client_ids))).all()
+
+#  Create Campaign (single client or list)
+@router.post("/campaigns/", response_model=Campaign)
+def create_campaign(campaign: CampaignCreate, session: Session = Depends(get_session)):
+    user = session.get(UserModel, campaign.user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if not campaign.client_id and not campaign.clientlist_id:
+        raise HTTPException(status_code=400, detail="Must provide either client_id or clientlist_id")
+
+    if campaign.client_id:
+        client = session.get(ClientModel, campaign.client_id)
+        if not client:
+            raise HTTPException(status_code=404, detail="Client not found")
+        if client.user_id != campaign.user_id:
+            raise HTTPException(status_code=400, detail="Client does not belong to this user")
+
+    if campaign.clientlist_id:
+        clist = session.get(ClientListModel, campaign.clientlist_id)
+        if not clist:
+            raise HTTPException(status_code=404, detail="ClientList not found")
+
+    db_campaign = CampaignModel(**campaign.dict(), created_at=datetime.utcnow())
+    session.add(db_campaign)
+    session.commit()
+    session.refresh(db_campaign)
+    return db_campaign
+
+
+
+
+@router.post("/campaigns/{campaign_id}/start/")
+def start_campaign(
+    campaign_id: int,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session)
+):
+    campaign = session.get(CampaignModel, campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+
+    background_tasks.add_task(run_campaign_plan_and_drafts, campaign_id)
+    return {"status": "started", "message": "Planner + Day 1 drafts queued."}
+
+
+def run_campaign_plan_and_drafts(campaign_id: int):
+    
+    CampaignPlannerAgent().invoke({"campaign_id": campaign_id})
+
+    with get_session() as s:
+        campaign = s.get(CampaignModel, campaign_id)
+
+        
+        plan_days = s.exec(
+            select(CampaignPlanModel).where(CampaignPlanModel.campaign_id == campaign_id)
+        ).all()
+        days = [p.day for p in plan_days]
+
+        
+        strategies = s.exec(select(StrategyModel).where(StrategyModel.campaign_id == campaign_id)).all()
+        if not strategies:
+            print(f"[INFO] No final strategies found. Falling back to InitialStrategy.")
+            if campaign.client_id:
+                initial = s.exec(select(InitialStrategyModel).where(InitialStrategyModel.client_id == campaign.client_id)).first()
+                strategies = [initial] if initial else []
+            elif campaign.clientlist_id:
+                links = s.exec(select(ClientListLinkModel).where(ClientListLinkModel.list_id == campaign.clientlist_id)).all()
+                strategies = []
+                for link in links:
+                    initial = s.exec(select(InitialStrategyModel).where(InitialStrategyModel.client_id == link.client_id)).first()
+                    if initial:
+                        strategies.append(initial)
+
+        
+        channels = {
+            s.channel.lower() if hasattr(s, "channel") else s.engagement_channel.lower()
+            for s in strategies
+        }
+
+        
+        targets = []
+        if campaign.client_id:
+            targets = [campaign.client_id]
+        elif campaign.clientlist_id:
+            links = s.exec(select(ClientListLinkModel).where(ClientListLinkModel.list_id == campaign.clientlist_id)).all()
+            targets = [l.client_id for l in links]
+
+        # 6. Run draft agents for each day
+        for client_id in targets:
+            for day in days:
+                if 'email' in channels:
+                    EmailDraftAgent().invoke({
+                        "campaign_id": campaign_id,
+                        "contact_id": client_id,
+                        "day": day
+                    })
+                if 'message' in channels:
+                    DraftMessageAgent().invoke({
+                        "campaign_id": campaign_id,
+                        "contact_id": client_id,
+                        "day": day
+                    })
+
+
+
+# @router.post("/users/{user_id}/clients/full-setup/")
+# def full_contact_setup(
+#     user_id: int,
+#     data: FullContactSetupRequest,
+#     session: Session = Depends(get_session)
+# ):
+#     # 1. Create or update client
+#     client = Client(user_id=user_id, **data.client.dict())
+#     session.add(client)
+#     session.commit()
+#     session.refresh(client)
+
+#     # 2. Save context questions
+#     if data.context_questions:
+#         for qa in data.context_questions:
+#             question = ContextQuestion(
+#                 client_id=client.client_id,
+#                 user_id=user_id,
+#                 question=qa.question,
+#                 answer=qa.answer
+#             )
+#             session.add(question)
+
+#     # 3. Save communications
+#     if data.communications:
+#         for c in data.communications:
+#             comm = Communication(
+#                 client_id=client.client_id,
+#                 user_id=user_id,
+#                 content=c.content,
+#                 channel=c.channel
+#             )
+#             session.add(comm)
+
+#     session.commit()
+
+#     # 4. Call profile builder agent
+#     ProfileUpdateAgent().invoke({"client_id": client.client_id})
+
+#     return {"status": "success", "client_id": client.client_id}
+
+
+
+
+# def run_campaign_plan_and_drafts(campaign_id: int):
+#     # 1. Generate plan
+#     CampaignPlannerAgent().invoke({"campaign_id": campaign_id})
+
+
+#     with get_session() as s:
+#         campaign = s.get(CampaignModel, campaign_id)
+
+#         # 2. Fetch strategies; fallback to InitialStrategy if none found
+#         strategies = s.exec(select(StrategyModel).where(StrategyModel.campaign_id == campaign_id)).all()
+
+#         if not strategies:
+#             print(f"[INFO] No final strategies found. Falling back to InitialStrategy.")
+#             if campaign.client_id:
+#                 initial = s.exec(select(InitialStrategyModel).where(InitialStrategyModel.client_id == campaign.client_id)).first()
+
+#                 strategies = [initial] if initial else []
+#             elif campaign.clientlist_id:
+#                 links = s.exec(select(ClientListLinkModel).where(ClientListLinkModel.list_id == campaign.clientlist_id)).all()
+#                 strategies = []
+#                 for link in links:
+#                     initial = s.exec(select(InitialStrategyModel).where(InitialStrategyModel.client_id == campaign.client_id)).first()
+#                     if initial:
+#                         strategies.append(initial)
+
+#         # 3. Determine channels from strategy data
+#         channels = {s.channel.lower() if hasattr(s, "channel") else s.engagement_channel.lower() for s in strategies}
+#         targets = []
+
+#         if campaign.client_id:
+#             targets = [campaign.client_id]
+#         elif campaign.clientlist_id:
+#             links = s.exec(select(ClientListLinkModel).where(ClientListLinkModel.list_id == campaign.clientlist_id)).all()
+#             targets = [l.client_id for l in links]
+
+#         # 4. Run draft agents for Day 1
+#         for client_id in targets:
+#             for day in days:
+#                 if 'email' in channels:
+#                     EmailDraftAgent().invoke({
+#                         "campaign_id": campaign_id,
+#                         "contact_id": client_id,
+#                         "day": day
+#                     })
+#                 if 'message' in channels:
+#                     DraftMessageAgent().invoke({
+#                         "campaign_id": campaign_id,
+#                         "contact_id": client_id,
+#                         "day": day
+#                     })
+
+
+
+
+@router.get("/clients/{client_id}/initial-strategy/", response_model=InitialStrategy)
+def get_initial_strategy(client_id: int, session: Session = Depends(get_session)):
+    strategy = session.exec(
+        select(InitialStrategyModel).where(InitialStrategyModel.client_id == client_id)
+    ).first()
+    if not strategy:
+        raise HTTPException(status_code=404, detail="Initial strategy not found")
+    return strategy
+
+
+@router.post("/clients/{client_id}/initial-strategy/", response_model=InitialStrategy)
+def create_initial_strategy(
+    client_id: int,
+    strategy: InitialStrategyCreate,
+    session: Session = Depends(get_session)
+):
+    if strategy.client_id != client_id:
+        raise HTTPException(status_code=400, detail="Client ID mismatch")
+
+    db_strategy = InitialStrategyModel(**strategy.dict(), generated_at=datetime.utcnow())
+    session.add(db_strategy)
+    session.commit()
+    session.refresh(db_strategy)
+    return db_strategy
+
+
+
+
+
+
+
+
+
+
+# @router.post("/campaigns/{campaign_id}/start/")
+# def start_campaign(campaign_id: int, background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
+#     campaign = session.get(CampaignModel, campaign_id)
+#     if not campaign:
+#         raise HTTPException(status_code=404, detail="Campaign not found")
+
+#     # Add planner + draft job to background
+#     background_tasks.add_task(run_campaign_plan_and_drafts, campaign_id)
+#     return {"status": "started", "message": "Planning + Day 1 draft generation triggered."}
+
+
+# def run_campaign_plan_and_drafts(campaign_id: int):
+#     # 1. Generate multi-day plan
+#     CampaignPlannerAgent().invoke({"campaign_id": campaign_id})
+
+#     with get_session() as s:
+#         campaign = s.get(CampaignModel, campaign_id)
+
+#         if campaign.client_id:
+#             # 2a. For individual contact
+#             EmailDraftAgent().invoke({
+#                 "campaign_id": campaign_id,
+#                 "contact_id": campaign.client_id,
+#                 "day": "Day 1"
+#             })
+
+#         elif campaign.clientlist_id:
+#             # 2b. For each client in list
+#             links = s.exec(select(ClientListLinkModel).where(ClientListLinkModel.list_id == campaign.clientlist_id)).all()
+#             for link in links:
+#                 EmailDraftAgent().invoke({
+#                     "campaign_id": campaign_id,
+#                     "contact_id": link.client_id,
+#                     "day": "Day 1"
+#                 })
 
 
 
 
     
+# @router.post("/campaigns/{campaign_id}/start/")
+# def start_campaign(campaign_id: int, background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
+#     campaign = session.get(CampaignModel, campaign_id)
+#     if not campaign:
+#         raise HTTPException(status_code=404, detail="Campaign not found")
 
+#     background_tasks.add_task(run_campaign_plan_and_drafts, campaign_id)
+#     return {"status": "started", "message": "Planner + Day 1 drafts queued."}
+
+
+# def run_campaign_plan_and_drafts(campaign_id: int):
+#     # 1. Generate plan
+#     CampaignPlannerAgent().invoke({"campaign_id": campaign_id})
+
+#     with get_session() as s:
+#         campaign = s.get(CampaignModel, campaign_id)
+#         strategies = s.exec(select(StrategyModel).where(StrategyModel.campaign_id == campaign_id)).all()
+
+#         channels = {s.channel.lower() for s in strategies}
+#         targets = []
+
+#         if campaign.client_id:
+#             targets = [campaign.client_id]
+#         elif campaign.clientlist_id:
+#             links = s.exec(select(ClientListLinkModel).where(ClientListLinkModel.list_id == campaign.clientlist_id)).all()
+#             targets = [l.client_id for l in links]
+
+#         for client_id in targets:
+#             if 'email' in channels:
+#                 EmailDraftAgent().invoke({
+#                     "campaign_id": campaign_id,
+#                     "contact_id": client_id,
+#                     "day": "Day 1"
+#                 })
+#             if 'message' in channels:
+#                 DraftMessageAgent().invoke({
+#                     "campaign_id": campaign_id,
+#                     "contact_id": client_id,
+#                     "day": "Day 1"
+#                 })
+
+
+
+
+    

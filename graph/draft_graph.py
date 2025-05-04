@@ -1,31 +1,31 @@
 
-from langgraph.graph import StateGraph, START, END
-from typing import TypedDict
-from agents.draft_email_agent import DraftEmailAgent
-from agents.draft_message_agent import DraftMessageAgent
+# from langgraph.graph import StateGraph, START, END
+# from typing import TypedDict
+# from agents.draft_email_agent import DraftEmailAgent
+# from agents.draft_message_agent import DraftMessageAgent
 
-class DState(TypedDict, total=False):
-    strategy_id: int
-    channel: str  # "email" | "whatsapp"
-    draft_id: int
+# class DState(TypedDict, total=False):
+#     strategy_id: int
+#     channel: str  # "email" | "whatsapp"
+#     draft_id: int
 
-def choose_channel(st: DState):
-    return "email" if st["channel"] == "Email" else "whatsapp"
+# def choose_channel(st: DState):
+#     return "email" if st["channel"] == "Email" else "whatsapp"
 
-draft_graph = StateGraph(DState)
-draft_graph.add_node("email", DraftEmailAgent())
-draft_graph.add_node("whatsapp", DraftMessageAgent())
+# draft_graph = StateGraph(DState)
+# draft_graph.add_node("email", DraftEmailAgent())
+# draft_graph.add_node("whatsapp", DraftMessageAgent())
 
-draft_graph.add_conditional_edges(
-    source=START,
-    path=choose_channel,
-    path_map={"email": "email", "whatsapp": "whatsapp"}
-)
+# draft_graph.add_conditional_edges(
+#     source=START,
+#     path=choose_channel,
+#     path_map={"email": "email", "whatsapp": "whatsapp"}
+# )
 
-draft_graph.add_edge("email", END)
-draft_graph.add_edge("whatsapp", END)
+# draft_graph.add_edge("email", END)
+# draft_graph.add_edge("whatsapp", END)
 
-draft_phase = draft_graph.compile()
+# draft_phase = draft_graph.compile()
 
 
 

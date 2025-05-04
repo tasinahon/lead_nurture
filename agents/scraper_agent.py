@@ -149,16 +149,7 @@ class ScraperAgent(Runnable):
                     enriched_profile = self.enrich_profile_with_llm(filtered_prof, full_name, company)
                     self._store(cid, "linkedin_profile", enriched_profile)
 
-                    with open("agent.txt", "a", encoding="utf-8") as f:
-                        f.write(f"""
-======== Scraped LinkedIn Profile ========
-Client ID: {cid}
-Scraped At: {now.isoformat()}
-Full Name: {full_name}
-Company: {company}
-Extracted Summary: {json.dumps(enriched_profile, ensure_ascii=False, indent=2)}
-==========================================
-""")
+                    
 
         #  LinkedIn Posts 
         if username:
@@ -182,16 +173,7 @@ Extracted Summary: {json.dumps(enriched_profile, ensure_ascii=False, indent=2)}
                     enriched_posts = self.enrich_posts_with_llm(filtered_posts, full_name, company)
                     self._store(cid, "linkedin_post", enriched_posts)
 
-                    with open("agent.txt", "a", encoding="utf-8") as f:
-                        f.write(f"""
-======== Scraped LinkedIn Posts ========
-Client ID: {cid}
-Scraped At: {now.isoformat()}
-Full Name: {full_name}
-Company: {company}
-Extracted Posts Insights: {json.dumps(enriched_posts, ensure_ascii=False, indent=2)}
-=========================================
-""")
+                    
 
         #  Web Search (Tavily) 
         if full_name and company:
@@ -208,19 +190,11 @@ Extracted Posts Insights: {json.dumps(enriched_posts, ensure_ascii=False, indent
             )
             web_snippets = self.agent.run(user_prompt)
 
-            if isinstance(web_snippets, list) and len(web_snippets) > 0:
-                self._store(cid, "web_search", web_snippets)
+            if web_snippets:
+                self._store(cid, "web_search", {"summary": web_snippets})
 
-                with open("agent.txt", "a", encoding="utf-8") as f:
-                    f.write(f"""
-======== Web Search Insights ========
-Client ID: {cid}
-Scraped At: {now.isoformat()}
-Full Name: {full_name}
-Company: {company}
-Web Search Results: {json.dumps(web_snippets, ensure_ascii=False, indent=2)}
-======================================
-""")
+
+               
 
         return {"status": "scraped", "client_id": cid}
 

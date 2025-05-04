@@ -13,7 +13,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.agents import AgentFinish
 
 from db.session import get_session
-from db.database_schema import Communication, EmailDraft, Profile, Strategy,Campaign
+from db.database_schema import Communication, EmailDraft, Profile, Strategy,Campaign,CampaignPlan,User,InitialStrategy
 
 
 load_dotenv()  
@@ -25,115 +25,63 @@ LLM_DEFAULT = ChatGoogleGenerativeAI(
 )
 
 
-DRAFT_EMAIL_AGENT_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", "You are an email draft agent. Use tools to generate professional emails. Respond only with JSON."),
-    ("human", "{input}"),
-    ("placeholder", "{agent_scratchpad}"),
-])
+EMAIL_GENERATION_PROMPT = """
+    You are a professional AI email copywriter working on a B2B or B2C campaign. 
+
+    Your job is to write a **personalized, strategic email** for **{day}** of a multi-day campaign based on a predefined plan and client insights.
+
+    Plan for This Day:
+    - **Title**: {title}
+    - **Subject Line**: {subject}
+    - **Goal**: {goal}
+    - **Content Focus**: {body_idea}
+
+    Who is the recipient?
+    - **Profile Summary**: {profile_summary}
+    - **Interests**: {interests}
+    - **Preferred Channel**: {preferred_contact}
+    - **Language**: {preferred_language}
+
+    Recent Communication (if any):
+    {recent_communications}
+
+    Sender Info:
+    - **Name**: {sender_name}
+    - **Email**: {sender_email}
+
+    Strategy Advice:
+    - **General Advice**: {general_advice}
+
+    
+
+    How to write:
+    - Use the **subject** and **body_idea** as your creative anchor.
+    - Tailor the tone to suit the profile and campaign goal.
+    - If the recipient is a business buyer, keep it professional but not robotic.
+    - If the goal is personal connection, use storytelling or empathy.
+    - Include a clear, relevant call-to-action in the closing (meeting, reply, etc.).
+    - Make sure it follows natural human email tone.
+
+    Output Format:
+    Return only this JSON format:
+    {{
+    "subject": "Your final email subject line",
+    "body_markdown": "Markdown-formatted body of the email"
+    }}
+
+    Do not include extra text, commentary, or formatting outside the JSON.
+    """
 
 
 
-@tool
-def generate_cta(product_type: str, interests: str = "") -> str:
-    """Return a <30‑word B2B call‑to‑action for the given product."""
-    prompt = (
-        "You are writing a B2B email.\n"
-        f"Product Type: {product_type}\n"
-        f"Client Interests: {interests}\n"
-        "Suggest a strong yet professional CTA (<30 words) motivating the next step (meeting/demo/trial)."
-    )
-    return LLM_DEFAULT.predict(prompt).strip()
 
-
-@tool
-def adjust_tone(personality_vector: str = "", title: str = "") -> str:
-    """Choose an email‑tone string based on persona & seniority."""
-    tone = "professional and friendly"
-    pv = personality_vector.lower()
-    if any(tok in pv for tok in ("visionary", "innovative")):
-        tone = "forward‑thinking and strategic"
-    if any(k in title.lower() for k in ("chief", "ceo", "founder", "vp")):
-        tone = "concise and outcome‑focused"
-    return tone
-
-
-@tool
-def suggest_subject_line(strategy_channel: str, last_communication_summary: str) -> str:
-    """Generate an email subject line (<60 chars)."""
-    prompt = (
-        "Suggest a crisp email subject line (<60 chars).\n"
-        f"Channel: {strategy_channel}\n"
-        f"Recent Topics: {last_communication_summary}\n"
-        "It must be professional, engaging, and emoji‑free."
-    )
-    return LLM_DEFAULT.predict(prompt).strip()[:60]
-
-
-@tool
-def generate_email_opener(profile_summary: str) -> str:
-    """Return a personalised 1‑2 sentence opener."""
-    prompt = (
-        "Generate a friendly, professional first line for an email.\n"
-        f"Recipient summary: {profile_summary}\n"
-        "It should establish rapport immediately in 1‑2 sentences."
-    )
-    return LLM_DEFAULT.predict(prompt).strip()
-
-
-@tool
-def summarize_recent_communications(messages: List[str]) -> str:
-    """Summarise recent messages in 2‑3 lines."""
-    if not messages:
-        return "No prior communications."
-    prompt = (
-        "Here are the recent communications:\n" + "\n".join(messages) + "\n\nSummarise the main themes in 2‑3 lines."
-    )
-    return LLM_DEFAULT.predict(prompt).strip()
-
-
-TOOLS = [
-    generate_cta,
-    adjust_tone,
-    suggest_subject_line,
-    generate_email_opener,
-    summarize_recent_communications,
-]
-
-
-
-class DraftEmailAgent(Runnable):
-    """Creates an EmailDraft row using Gemini tool‑calling and returns draft metadata."""
-
+class EmailDraftAgent(Runnable):
     def __init__(self):
-        self._sf = get_session
         self.llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.35)
-        self.agent = create_tool_calling_agent(
-            self.llm,
-            TOOLS,
-            DRAFT_EMAIL_AGENT_PROMPT
-        )
+        self._sf = get_session
 
-    
-    def _next_version(self, campaign_id: int) -> int:
+    def _get_comms_summary(self, client_id: int) -> str:
         with self._sf() as s:
-            return (
-                s.query(EmailDraft)
-                .filter_by(campaign_id=campaign_id)
-                .count()
-                + 1
-            )
-
-    
-    def _call(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
-        strat_id: int = inputs["strategy_id"]
-
-        
-        with self._sf() as s:
-            strat: Strategy = s.query(Strategy).get(strat_id)
-            campaign: Campaign = s.get(Campaign, strat.campaign_id)
-            client_id = campaign.client_id
-
-            profile: Profile = s.query(Profile).filter_by(client_id=client_id).one()
             comms: List[Communication] = (
                 s.query(Communication)
                 .filter_by(client_id=client_id)
@@ -141,69 +89,101 @@ class DraftEmailAgent(Runnable):
                 .limit(3)
                 .all()
             )
+        messages = [c.content for c in comms]
+        if not messages:
+            return "No recent communication."
+        prompt = "Summarize:\n" + "\n".join(messages)
+        return self.llm.predict(prompt).strip()
+    
+    def _next_version(self, campaign_id: int) -> int:
+        with self._sf() as s:
+            return s.query(EmailDraft).filter_by(campaign_id=campaign_id).count() + 1
 
-        last_msgs = [c.content for c in comms]
-        comms_summary = summarize_recent_communications.invoke({"messages": last_msgs})
+    def _call(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        campaign_id = inputs["campaign_id"]
+        contact_id = inputs["contact_id"]
+        day = inputs["day"]
+
+        with self._sf() as s:
+            campaign = s.query(Campaign).get(campaign_id)
+            user = s.query(User).get(campaign.user_id)
+            plan = (
+                s.query(CampaignPlan)
+                .filter_by(campaign_id=campaign_id, day=day)
+                .first()
+            )
+            profile = s.query(Profile).filter_by(client_id=contact_id).first()
+            strategy = s.query(InitialStrategy).filter_by(client_id=contact_id).first()
+            general_advice = strategy.general_advice if strategy else "No strategy advice available."
+
+
+        comms_summary = self._get_comms_summary(contact_id)
 
         
-        agent_prompt = (
-            "You are drafting a strategic outreach email.\n"
-            f"Profile Summary: {profile.summary}\n"
-            f"Personality Vector: {profile.personality_vector}\n"
-            f"Preferred Language: {profile.preferred_language}\n"
-            f"Preferred Contact: {profile.preferred_contact}\n"
-            f"Interests: {profile.interests}\n"
-            f"Strategy Details: Channel={strat.channel}, Schedule={strat.schedule}, Product={strat.product_type}\n"
-            f"Recent Communication Summary: {comms_summary}\n"
-            "Use the tools to create an opener, subject line, CTA, and tone.\n"
-            "Return JSON with keys: subject, body_markdown."
+        formatted_prompt = EMAIL_GENERATION_PROMPT.format(
+            day=day,
+            title=plan.title,
+            subject=plan.subject,
+            goal=plan.goal,
+            body_idea=plan.body_idea,
+            profile_summary=profile.summary,
+            interests=profile.interests,
+            preferred_contact=profile.preferred_contact,
+            preferred_language=profile.preferred_language,
+            sender_name=user.name,
+            sender_email=user.email,
+            general_advice=general_advice,
+            recent_communications=comms_summary
         )
 
-        raw = self.agent.invoke({
-            "input": agent_prompt,
-            "intermediate_steps": []
-        })
+        # Send to LLM
+        raw_output = self.llm.invoke(formatted_prompt)
+        raw_content = raw_output.content.strip()
 
-        if isinstance(raw, AgentFinish):
-            output_str = raw.return_values.get("output", "")
-        elif isinstance(raw, dict):
-            output_str = raw.get("output", "")
+        # Remove code block markers if present
+        if raw_content.startswith("```"):
+            cleaned = raw_content.split("\n", 1)[1].rsplit("\n", 1)[0]
         else:
-            output_str = str(raw)
+            cleaned = raw_content
 
         try:
-            content = json.loads(output_str)
-        except json.JSONDecodeError:
-            content = {"body_markdown": output_str}
+            parsed_email = json.loads(cleaned)
+            subject = parsed_email["subject"]
+            body = parsed_email["body_markdown"]
+        except (json.JSONDecodeError, KeyError):
+            subject = plan.subject
+            body = cleaned  
 
-        subject: str = content.get("subject", "(no subject)").strip()
-        body_md: str = content.get("body_markdown") or content.get("body") or "(empty)"
 
-        
+
         with self._sf() as s:
-            version = self._next_version(strat.campaign_id)
+            version = self._next_version(campaign_id)
             draft = EmailDraft(
-                campaign_id=strat.campaign_id,
+                campaign_id=campaign_id,
+                contact_id=contact_id,
                 version_no=version,
-                body_markdown=body_md,
+                subject=subject,
+                body_markdown=body,
                 is_approved=False,
-                created_at=datetime.utcnow(),
+                created_at=datetime.utcnow()
             )
+
             s.add(draft)
             s.commit()
-            s.refresh(draft)  
-            draft_id = draft.draft_id
+            s.refresh(draft)
 
         return {
             "status": "draft_created",
-            "draft_id": draft_id,
-            "version": draft.version_no,
+            "contact_id": contact_id,
             "subject": subject,
+            "draft_id": draft.draft_id
         }
 
-    
-    def invoke(self, input: Dict[str, Any], config=None):  
+    def invoke(self, input: Dict[str, Any], config=None):
         return self._call(input)
+
+
+
 
 
 

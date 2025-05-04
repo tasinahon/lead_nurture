@@ -13,167 +13,149 @@ from langchain_core.runnables import Runnable
 from langchain_core.agents import AgentFinish
 
 from db.session import get_session
-from db.database_schema import Strategy, Profile, Communication, MessageDraft,Campaign
+from db.database_schema import Communication, MessageDraft, Profile, Strategy,Campaign,CampaignPlan,User,InitialStrategy
 
 
 load_dotenv()
 
 
-LLM_DEFAULT = ChatGoogleGenerativeAI(
-    model="gemini-1.5-flash",
-    temperature=0.3
-)
+# LLM_DEFAULT = ChatGoogleGenerativeAI(
+#     model="gemini-1.5-flash",
+#     temperature=0.3
+# )
 
 
-DRAFT_MESSAGE_AGENT_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", "You are a WhatsApp outreach assistant. Use tools to create personalized, strategic messages. Respond only with JSON."),
-    ("human", "{input}"),
-    ("placeholder", "{agent_scratchpad}"),
-])
+MESSAGE_GENERATION_PROMPT = """
+You are an AI assistant helping create **professional, personalized WhatsApp messages** for a business campaign.
 
+Your goal is to generate a clear, concise message for **{day}** of a multi-day campaign, based on campaign strategy and client insights.
 
-@tool
-def generate_whatsapp_opener(profile_summary: str) -> str:
-    """Create a quick personalized WhatsApp opening line."""
-    prompt = (
-        f"Create a friendly 1-line opener for WhatsApp based on:\n"
-        f"Profile Summary: {profile_summary}\n"
-        "Keep it natural, respectful, and under 20 words."
-    )
-    return LLM_DEFAULT.predict(prompt).strip()
+Plan for This Day:
+- **Title**: {title}
+- **Message Goal**: {goal}
+- **Key Idea**: {body_idea}
 
-@tool
-def suggest_message_cta(product_type: str, interests: str = "") -> str:
-    """Suggest a short call-to-action for WhatsApp messages."""
-    prompt = (
-        f"Suggest a WhatsApp-style CTA (<20 words) to propose next steps.\n"
-        f"Product Type: {product_type}\n"
-        f"Client Interests: {interests}\n"
-        "Make it actionable (e.g., 'Can we hop on a quick call?')."
-    )
-    return LLM_DEFAULT.predict(prompt).strip()
+Who is the recipient?
+- **Profile Summary**: {profile_summary}
+- **Interests**: {interests}
+- **Preferred Language**: {preferred_language}
 
-@tool
-def summarize_communications(messages: List[str]) -> str:
-    """Summarize last few communications into a short overview."""
-    if not messages:
-        return "No prior chats."
-    prompt = (
-        "Recent WhatsApp communications:\n" + "\n".join(messages) + "\n\nSummarize the themes briefly (1-2 lines)."
-    )
-    return LLM_DEFAULT.predict(prompt).strip()
+Recent Communication:
+{recent_communications}
 
-@tool
-def adjust_message_tone(personality_vector: str = "", title: str = "") -> str:
-    """Adjust tone for WhatsApp message based on personality and seniority."""
-    tone = "friendly"
-    if "strategic" in personality_vector.lower() or "visionary" in personality_vector.lower():
-        tone = "visionary and professional"
-    if any(t in title.lower() for t in ("chief", "ceo", "founder")):
-        tone = "concise and respectful"
-    return tone
+Sender Info:
+- **Name**: {sender_name}
 
-TOOLS = [
-    generate_whatsapp_opener,
-    suggest_message_cta,
-    summarize_communications,
-    adjust_message_tone,
-]
+Strategy Advice:
+- **General Advice**: {general_advice}
 
+Writing Guidelines:
+- Keep it short, friendly, and clear.
+- Use a human tone, like a WhatsApp message from a business contact.
+- Avoid overly formal or robotic language.
+- End with a soft CTA (e.g., “Let me know”, “Would love to hear your thoughts”, etc.)
+
+Output Format:
+Return only this JSON format:
+{{
+"message_text": "Your full WhatsApp message text"
+}}
+
+Do not include extra text or explanations.
+"""
 
 class DraftMessageAgent(Runnable):
-    """Creates a MessageDraft row using Gemini tool-calling and returns draft metadata."""
-
     def __init__(self):
+        self.llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.35)
         self._sf = get_session
-        self.llm = ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash",
-            temperature=0.3
-        )
-        self.agent = create_tool_calling_agent(
-            self.llm,
-            TOOLS,
-            DRAFT_MESSAGE_AGENT_PROMPT
-        )
+
+    def _get_comms_summary(self, client_id: int) -> str:
+        with self._sf() as s:
+            comms = (
+                s.query(Communication)
+                .filter_by(client_id=client_id)
+                .order_by(Communication.timestamp.desc())
+                .limit(3)
+                .all()
+            )
+        messages = [c.content for c in comms]
+        if not messages:
+            return "No recent communication."
+        prompt = "Summarize:\n" + "\n".join(messages)
+        return self.llm.predict(prompt).strip()
 
     def _next_version(self, campaign_id: int) -> int:
         with self._sf() as s:
             return s.query(MessageDraft).filter_by(campaign_id=campaign_id).count() + 1
 
     def _call(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
-        strat_id: int = inputs["strategy_id"]
+        campaign_id = inputs["campaign_id"]
+        contact_id = inputs["contact_id"]
+        day = inputs["day"]
 
         with self._sf() as s:
-            strat: Strategy = s.get(Strategy, strat_id)
-            campaign: Campaign = s.get(Campaign, strat.campaign_id)
-            client_id = campaign.client_id
-
-            profile: Profile = s.query(Profile).filter_by(client_id=client_id).one()
-            comms: List[Communication] = (
-                s.query(Communication)
-                .filter_by(client_id=client_id)
-                .order_by(Communication.timestamp.desc())
-                .limit(5)
-                .all()
+            campaign = s.query(Campaign).get(campaign_id)
+            user = s.query(User).get(campaign.user_id)
+            plan = (
+                s.query(CampaignPlan)
+                .filter_by(campaign_id=campaign_id, day=day)
+                .first()
             )
+            profile = s.query(Profile).filter_by(client_id=contact_id).first()
+            strategy = s.query(InitialStrategy).filter_by(client_id=contact_id).first()
+            general_advice = strategy.general_advice if strategy else "No strategy advice available."
 
-            last_msgs = [c.content for c in comms]
-            summarized_comms = summarize_communications.invoke({"messages": last_msgs})
+        comms_summary = self._get_comms_summary(contact_id)
 
-        agent_prompt = (
-            "You are writing a WhatsApp outreach message.\n"
-            f"Profile Summary: {profile.summary}\n"
-            f"Personality: {profile.personality_vector}\n"
-            f"Preferred Contact: {profile.preferred_contact}\n"
-            f"Interests: {profile.interests}\n"
-            f"Strategy: Channel={strat.channel}, Schedule={strat.schedule}, Product={strat.product_type}\n"
-            f"Recent Chat Summary: {summarized_comms}\n"
-            "Use the tools to:\n"
-            "- Create a friendly opener\n"
-            "- Adjust tone\n"
-            "- Suggest a WhatsApp CTA\n"
-            "Return JSON: {message_text}."
+        formatted_prompt = MESSAGE_GENERATION_PROMPT.format(
+            day=day,
+            title=plan.title,
+            goal=plan.goal,
+            body_idea=plan.body_idea,
+            profile_summary=profile.summary,
+            interests=profile.interests,
+            preferred_language=profile.preferred_language,
+            sender_name=user.name,
+            general_advice=general_advice,
+            recent_communications=comms_summary
         )
 
-        
-        raw = self.agent.invoke({
-            "input": agent_prompt,
-            "intermediate_steps": []
-        })
+        raw_output = self.llm.invoke(formatted_prompt)
+        raw_content = raw_output.content.strip()
 
-        if isinstance(raw, AgentFinish):
-            output_str = raw.return_values.get("output", "")
-        elif isinstance(raw, dict):
-            output_str = raw.get("output", "")
+        if raw_content.startswith("```"):
+            cleaned = raw_content.split("\n", 1)[1].rsplit("\n", 1)[0]
         else:
-            output_str = str(raw)
+            cleaned = raw_content
 
         try:
-            content = json.loads(output_str)
-        except json.JSONDecodeError:
-            content = {"message_text": output_str}
-
-        message_text = content.get("message_text", "(empty)").strip()
+            parsed_message = json.loads(cleaned)
+            message_text = parsed_message["message_text"]
+        except (json.JSONDecodeError, KeyError):
+            message_text = cleaned
 
         with self._sf() as s:
-            version = self._next_version(strat.campaign_id)
+            version = self._next_version(campaign_id)
             draft = MessageDraft(
-                campaign_id=strat.campaign_id,
+                campaign_id=campaign_id,
+                contact_id=contact_id,
                 version_no=version,
                 message_text=message_text,
                 is_approved=False,
-                created_at=datetime.utcnow(),
+                created_at=datetime.utcnow()
             )
+
             s.add(draft)
             s.commit()
-            s.refresh(draft)  
-            draft_id = draft.draft_id
+            s.refresh(draft)
 
         return {
-            "status": "message_draft_created",
-            "draft_id": draft_id,
-            "version": draft.version_no,
+            "status": "draft_created",
+            "contact_id": contact_id,
+            "message_text": message_text,
+            "draft_id": draft.draft_id
         }
 
-    def invoke(self, input: Dict[str, Any], config=None):  
+    def invoke(self, input: Dict[str, Any], config=None):
         return self._call(input)
+

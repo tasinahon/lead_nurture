@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 from datetime import datetime
 from typing import Dict, Any, List
 
@@ -10,9 +11,12 @@ from langchain.agents import create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable
 from langchain.tools import tool
+from pydantic import BaseModel
+from langchain_core.output_parsers import JsonOutputParser
 
 from db.session import get_session
 from db.database_schema import MessageDraft, Message, Profile, Communication
+from db.database_schema import Client, Profile, EmailDraft, MessageDraft
 
 
 load_dotenv()
@@ -25,109 +29,113 @@ LLM_DEFAULT = ChatGoogleGenerativeAI(
 )
 
 
-PERSONALISER_PROMPT = ChatPromptTemplate.from_messages([
-    ("system",
-     "You are a professional WhatsApp message rewriter.\n"
-     "• Greet using <<fname>>.\n"
-     "• Adjust to tone (<<tone>>).\n"
-     "• Translate if needed to <<language>>.\n"
-     "Keep it natural and concise for WhatsApp."),
-    ("human", "{input}"),
-    ("placeholder", "{agent_scratchpad}"),
-])
 
-
-@tool
-def tone_shift(body: str, tone: str = "friendly") -> str:
-    """Rewrite WhatsApp message in requested tone."""
-    prompt = f"Rewrite the WhatsApp message below in a {tone} tone:\n---\n{body}"
-    return LLM_DEFAULT.predict(prompt).strip()
-
-TOOLS = [tone_shift]
+class PersonalizedMessageOutput(BaseModel):
+    subject: str =None
+    body_markdown: str
 
 
 class MessagePersonaliserAgent(Runnable):
-    """Generates a personalized Message from MessageDraft and Profile."""
-
     def __init__(self):
-        self._sf = get_session
-        self.llm = LLM_DEFAULT
-        self.agent = create_tool_calling_agent(
-            self.llm,
-            TOOLS,
-            PERSONALISER_PROMPT,
-        )
+        self.llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.3)
+        self.session_factory = get_session
+        self.parser = JsonOutputParser(pydantic_schema=PersonalizedMessageOutput)
+        self.prompt = self._build_prompt()
+
+    def _build_prompt(self):
+        return ChatPromptTemplate.from_messages([
+            ("system", """
+                You are a message personalisation assistant for professional short-form messages (like WhatsApp, LinkedIn, SMS).
+
+                You will receive:
+                - A base message draft
+                - Client profile (name, company, interests, etc.)
+                - Optional reviewer feedback
+
+                Your job is to:
+                1. Personalise the message:
+                - Greet by name
+                - Mention company or category if relevant
+                - Add 1-2 interest-based hooks
+                - Use preferred language or translate if needed
+                - Mention the best time to connect if provided
+
+                2. If feedback is present:
+                - Respect it and revise the message without losing the core intent
+                - Make the tone match expectations (e.g., softer, direct, fun, etc.)
+
+                Keep the message concise, conversational, and under 75 words.
+
+                Output strictly in this JSON format:
+                {
+                "subject": "",  // Leave blank if not applicable
+                "body_markdown": "..."
+                }
+
+                No commentary. No formatting outside JSON.
+                {format_instructions}
+                """),
+                            ("user", "{input_context}")
+                        ])
 
     def _call(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
         draft_id = inputs["draft_id"]
+        feedback_text = inputs.get("feedback", "")
 
-        with self._sf() as session:
-            draft: MessageDraft = session.get(MessageDraft, draft_id)
-            if not draft:
-                raise ValueError(f"MessageDraft id={draft_id} not found")
+        with self.session_factory() as session:
+            draft = session.get(MessageDraft, draft_id)
+            client = session.get(Client, draft.client_id)
+            profile = session.query(Profile).filter_by(client_id=client.client_id).first()
 
-            
-            profile: Profile = (
-                session.query(Profile)
-                .filter_by(client_id=draft.campaign_id)
-                .first()
-            )
-            if not profile:
-                raise ValueError(f"No profile found for campaign_id={draft.campaign_id}")
+        input_context = {
+            "name": client.full_name,
+            "company": client.company,
+            "category": client.category,
+            "interests": profile.interests.split(",") if profile.interests else [],
+            "engagement_times": profile.engagement_times,
+            "preferred_language": profile.preferred_language,
+            "original_subject": "",
+            "original_body": draft.message_text
+        }
 
-            
-            from db.database_schema import Client
-            client = session.get(Client, profile.client_id)
-            full_name = client.full_name if client and client.full_name else "there"
+        if feedback_text:
+            input_context["feedback"] = feedback_text
 
-            comms: List[Communication] = (
-                session.query(Communication)
-                .filter_by(client_id=profile.client_id)
-                .order_by(Communication.timestamp.desc())
-                .limit(5)
-                .all()
-            )
+        formatted = self.prompt.format_prompt(
+            input_context=json.dumps(input_context, ensure_ascii=False),
+            format_instructions=self.parser.get_format_instructions()
+        ).to_string()
 
+        raw_output = self.llm.invoke(formatted)
+        # parsed = self.parser.parse(raw.content)
+
+        raw_content = raw_output.content.strip()
 
         
-        first_name = full_name.split()[0] if full_name else "there"
-        preferred_language = profile.preferred_language or "English"
-        preferred_tone = profile.preferred_contact or "friendly"
-        recent_msgs = [c.content for c in comms]
-
-        agent_input = (
-            f"<<fname>>: {first_name}\n"
-            f"<<tone>>: {preferred_tone}\n"
-            f"<<language>>: {preferred_language}\n"
-            f"Recent Messages: {recent_msgs}\n"
-            "---\n"
-            f"{draft.message_text}"
-        )
+        if raw_content.startswith("```"):
+            cleaned = raw_content.split("\n", 1)[1].rsplit("\n", 1)[0]
+        else:
+            cleaned = raw_content
 
         try:
-            raw = self.agent.invoke({"input": agent_input})
-            content = raw.get("output") if isinstance(raw, dict) else str(raw)
-        except Exception:
-            content = draft.message_text
-
-        
-        with self._sf() as session:
-            message = Message(
-                draft_id=draft.draft_id,
-                personalized_text=content.strip(),
-                is_final=False,
-                approved_at=None
+            parsed_dict = json.loads(cleaned)
+            parsed = PersonalizedMessageOutput(**parsed_dict)
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            
+            parsed = PersonalizedMessageOutput(
+                subject=getattr(draft, "subject", "") or "Subject",
+                body_markdown=cleaned
             )
-            session.add(message)
-            session.commit()
-            session.refresh(message)
 
-        return {"status": "personalised", "message_id": message.message_id}
+        return {
+            "status": "personalised",
+            "channel": "message",
+            "subject": parsed.subject,
+            "body_markdown": parsed.body_markdown
+        }
 
-    def invoke(self, input: Dict[str, Any], config=None):
+    def invoke(self, input: Dict[str, Any], config=None) -> Dict[str, Any]:
         return self._call(input)
-
-
 
 
 

@@ -22,10 +22,15 @@ class User(UserBase):
 class ClientBase(BaseModel):
     full_name: str
     company: str
-    title: str
     email: Optional[str] = None
+    phone: Optional[str] = None
+    company_website: Optional[str] = None
     linkedin_url: Optional[str] = None
-    instagram_handle: Optional[str] = None
+    facebook: Optional[str] = None
+    instagram: Optional[str] = None
+    whatsapp: Optional[str] = None
+    category: Optional[str] = None
+
 
 class ClientCreate(ClientBase):
     user_id: int
@@ -46,6 +51,7 @@ class ProfileBase(BaseModel):
     preferred_language: str
     preferred_contact: str
     engagement_times: str  # JSON string
+    full_text:str
 
 class ProfileCreate(ProfileBase):
     client_id: int
@@ -59,21 +65,42 @@ class Profile(ProfileBase):
 
 # Campaign Models
 class CampaignBase(BaseModel):
-    goal: str
-    status: str
+    name: str
+    description: str
+    tags: str  
 
 class CampaignCreate(CampaignBase):
     user_id: int
-    client_id: int
+    client_id: Optional[int] = None
+    clientlist_id: Optional[int] = None
 
 class Campaign(CampaignBase):
     campaign_id: int
     user_id: int
-    client_id: int
+    client_id: Optional[int] = None
+    clientlist_id: Optional[int] = None
     created_at: datetime
 
     class Config:
         from_attributes = True
+
+
+#initial strategy
+class InitialStrategyBase(BaseModel):
+    engagement_channel: str
+    tone_style: str
+    communication_frequency: str
+    general_advice: str
+
+# For incoming POST request
+class InitialStrategyCreate(InitialStrategyBase):
+    client_id: int
+
+# For response
+class InitialStrategy(InitialStrategyBase):
+    strategy_id: int
+    client_id: int
+    generated_at: datetime
 
 # Strategy Models
 class StrategyBase(BaseModel):
@@ -96,14 +123,17 @@ class Strategy(StrategyBase):
 class EmailDraftBase(BaseModel):
     version_no: int
     body_markdown: str
+    subject: str
     is_approved: bool
 
 class EmailDraftCreate(EmailDraftBase):
     campaign_id: int
+    contact_id: int  
 
 class EmailDraft(EmailDraftBase):
     draft_id: int
     campaign_id: int
+    contact_id: int  
     created_at: datetime
 
     class Config:
@@ -120,10 +150,12 @@ class MessageDraftBase(BaseModel):
 
 class MessageDraftCreate(MessageDraftBase):
     campaign_id: int
+    contact_id: int
 
 class MessageDraft(MessageDraftBase):
     draft_id: int
     campaign_id: int
+    contact_id: int
     created_at: datetime
 
     class Config:
@@ -300,6 +332,35 @@ class Communication(CommunicationBase):
     user_id: int
     client_id: int
     timestamp: datetime
+
+    class Config:
+        from_attributes = True
+
+
+
+
+class ClientListBase(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+class ClientListCreate(ClientListBase):
+    pass
+
+class ClientList(ClientListBase):
+    clientlist_id: int
+    user_id: int
+
+    class Config:
+        from_attributes = True
+
+
+
+class ClientListLinkBase(BaseModel):
+    client_id: int
+    list_id: int
+
+class ClientListLink(ClientListLinkBase):
+    id: int
 
     class Config:
         from_attributes = True

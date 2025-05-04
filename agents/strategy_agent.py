@@ -15,7 +15,7 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from db.session import get_session
 from db.database_schema import Strategy, Profile, Communication
-from graph.draft_graph import draft_phase
+# from graph.draft_graph import draft_phase
 
 load_dotenv()
 
@@ -148,10 +148,10 @@ class StrategyAgent(Runnable):
             s.refresh(strat)
             strategy_id = strat.strategy_id
 
-            draft_phase.invoke({
-                "strategy_id": strategy_id,
-                "channel": strategy.channel
-            })
+            # draft_phase.invoke({
+            #     "strategy_id": strategy_id,
+            #     "channel": strategy.channel
+            # })
 
         log_content = f"""
 ======== Strategy Generation ========
@@ -174,3 +174,131 @@ Generated At: {datetime.utcnow().isoformat()}
 
     def invoke(self, input: Dict[str, Any], config=None):
         return self._call(input)
+
+
+
+
+
+from langchain_core.runnables import Runnable
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.output_parsers import JsonOutputParser
+from langchain_core.prompts import ChatPromptTemplate
+
+from db.session import get_session
+from db.database_schema import (
+    Campaign, CampaignPlan, Profile, Strategy, Communication, Engagement, ContextQuestion
+)
+
+from pydantic import BaseModel
+from typing import Dict, Any, List, Optional
+from datetime import datetime
+import os, json
+
+class StrategySchema(BaseModel):
+    channel: str
+    schedule: str
+    product_type: str
+    tone: Optional[str] = None
+    engagement_method: Optional[str] = None
+
+
+# class StrategyAgent(Runnable):
+#     def __init__(self):
+#         self.llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.35)
+#         self.parser = JsonOutputParser(pydantic_schema=StrategySchema)
+#         self.prompt = self._build_prompt()
+#         self.session_factory = get_session
+
+#     def _build_prompt(self):
+#         return ChatPromptTemplate.from_messages([
+#             ("system", """
+# You are an advanced AI campaign strategist. Your task is to create a communication strategy for an outreach campaign.
+
+# You will be given:
+# - Campaign goal and tags
+# - Client profile and preferences (or sample profile group)
+# - Engagement summary (if available)
+# - Multi-day campaign plan structure
+
+# 📌 Your job:
+# 1. Choose the best **communication channel** based on client preferences and goal.
+# 2. Suggest the **schedule** — best days/times for reaching out.
+# 3. Specify **product type** if it can be inferred.
+# 4. Define an appropriate **tone** — friendly, urgent, consultative, etc.
+# 5. Recommend an **engagement method** — reply CTA, link, follow-up, etc.
+
+# ⚠️ If no engagement history or Q&A is available, assume it's a first-time contact. Adjust tone and timing accordingly.
+
+# Return only this JSON:
+# {
+#   "channel": "email or whatsapp",
+#   "schedule": "Monday mornings and Thursday follow-up",
+#   "product_type": "software or consulting",
+#   "tone": "Warm and consultative",
+#   "engagement_method": "Include Calendly link in CTA"
+# }
+
+# No commentary. Output must be valid JSON.
+# {format_instructions}
+# """),
+#             ("user", "{input_context}")
+#         ])
+
+#     def _call(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
+#         campaign_id = inputs["campaign_id"]
+#         with self.session_factory() as s:
+#             campaign = s.get(Campaign, campaign_id)
+#             plans = s.query(CampaignPlan).filter_by(campaign_id=campaign_id).all()
+#             profile = s.query(Profile).filter_by(client_id=campaign.client_id).first()
+#             qna = s.query(ContextQuestion).filter_by(client_id=campaign.client_id).all()
+#             comms = s.query(Communication).filter_by(client_id=campaign.client_id).all()
+#             engagement = s.query(Engagement).filter_by(campaign_id=campaign_id).all()
+
+#         input_context = json.dumps({
+#             "goal": campaign.goal,
+#             "tags": campaign.tags,
+#             "profile_summary": profile.summary if profile else "",
+#             "preferred_contact": profile.preferred_contact if profile else "",
+#             "engagement_summary": [e.event_type for e in engagement],
+#             "context_qna": [{"q": q.question, "a": q.answer} for q in qna],
+#             "communications": [c.content for c in comms[:3]],
+#             "campaign_plan_summary": [
+#                 {
+#                     "day": p.day,
+#                     "title": p.title,
+#                     "subject": p.subject,
+#                     "goal": p.goal
+#                 } for p in plans
+#             ]
+#         }, ensure_ascii=False)
+
+#         formatted = self.prompt.format_prompt(
+#             input_context=input_context,
+#             format_instructions=self.parser.get_format_instructions()
+#         ).to_string()
+
+#         raw = self.llm.invoke(formatted)
+#         parsed = self.parser.parse(raw.content)
+
+#         with self.session_factory() as s:
+#             strat = Strategy(
+#                 campaign_id=campaign_id,
+#                 channel=parsed.channel,
+#                 schedule=parsed.schedule,
+#                 product_type=parsed.product_type,
+#                 generated_at=datetime.utcnow()
+#             )
+#             s.add(strat)
+#             s.commit()
+#             s.refresh(strat)
+
+#         return {
+#             "status": "strategy_created",
+#             "campaign_id": campaign_id,
+#             "channel": parsed.channel,
+#             "schedule": parsed.schedule,
+#             "product_type": parsed.product_type
+#         }
+
+#     def invoke(self, input: Dict[str, Any], config=None):
+#         return self._call(input)

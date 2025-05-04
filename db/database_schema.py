@@ -23,6 +23,7 @@ class Client(SQLModel, table=True):
     instagram: Optional[str] = None
     whatsapp: Optional[str] = None
     category: Optional[str] = None  
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class ClientList(SQLModel, table=True):
@@ -37,15 +38,38 @@ class ClientListLink(SQLModel, table=True):
 
 
 
+# class Profile(SQLModel, table=True):
+#     profile_id: int = Field(default=None, primary_key=True)
+#     client_id: int = Field(foreign_key="client.client_id")
+#     summary: str
+#     interests: str
+#     personality_vector: str
+#     preferred_language: str
+#     preferred_contact: str
+#     engagement_times: str  # Stored as text (JSON)
+
 class Profile(SQLModel, table=True):
-    profile_id: int = Field(default=None, primary_key=True)
+    profile_id: Optional[int] = Field(default=None, primary_key=True)
     client_id: int = Field(foreign_key="client.client_id")
+    
     summary: str
-    interests: str
-    personality_vector: str
+    interests: str  # Comma-separated keywords
     preferred_language: str
     preferred_contact: str
-    engagement_times: str  # Stored as text (JSON)
+    engagement_times: str = None
+
+    full_text: str  # For embedding-rich descriptive paragraph
+    personality_vector: str  # JSON string of embedding vector
+
+class InitialStrategy(SQLModel, table=True):
+    strategy_id: int = Field(default=None, primary_key=True)
+    client_id: int = Field(foreign_key="client.client_id")
+    engagement_channel: str
+    tone_style: str
+    communication_frequency: str
+    general_advice: str
+    generated_at: datetime = Field(default_factory=datetime.utcnow)
+
 
 
 
@@ -60,7 +84,9 @@ class Strategy(SQLModel, table=True):
 class EmailDraft(SQLModel, table=True):
     draft_id: int = Field(default=None, primary_key=True)
     campaign_id: int = Field(foreign_key="campaign.campaign_id")
+    contact_id: int = Field(foreign_key="client.client_id")
     version_no: int
+    subject:str
     body_markdown: str
     is_approved: bool
     created_at: datetime
@@ -68,6 +94,7 @@ class EmailDraft(SQLModel, table=True):
 class MessageDraft(SQLModel, table=True):
     draft_id: int = Field(default=None, primary_key=True)
     campaign_id: int = Field(foreign_key="campaign.campaign_id")
+    contact_id: int = Field(foreign_key="client.client_id")
     version_no: int
     message_text: str
     is_approved: bool
