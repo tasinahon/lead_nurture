@@ -176,22 +176,83 @@ class ScraperAgent(Runnable):
                     
 
         #  Web Search (Tavily) 
-        if full_name and company:
-            user_prompt = (
-                f"You are a research assistant gathering strategic and insightful information about \"{full_name}\" "
-                f"and the company \"{company}\". Use the web search tool to discover:\n\n"
-                f"1. The company’s long-term strategy or business goals\n"
-                f"2. Expansion plans, global moves, or investment efforts\n"
-                f"3. Public or media-covered failures, scandals, or unmet goals\n"
-                f"4. What the company is most known for, and what sets it apart in its sector\n"
-                f"5. Notable leadership styles or decisions by {full_name} or other executives\n"
-                f"6. Recent news, funding, acquisitions, or restructuring plans\n\n"
-                f"Use focused search queries. Avoid general company summaries — dig into meaningful stories and developments."
-            )
-            web_snippets = self.agent.run(user_prompt)
+        # if full_name and company:
+        #     user_prompt = (
+        #         f"You are a research assistant gathering strategic and insightful information about \"{full_name}\" "
+        #         f"and the company \"{company}\". Use the web search tool to discover:\n\n"
+        #         f"1. The company’s long-term strategy or business goals\n"
+        #         f"2. Expansion plans, global moves, or investment efforts\n"
+        #         f"3. Public or media-covered failures, scandals, or unmet goals\n"
+        #         f"4. What the company is most known for, and what sets it apart in its sector\n"
+        #         f"5. Notable leadership styles or decisions by {full_name} or other executives\n"
+        #         f"6. Recent news, funding, acquisitions, or restructuring plans\n\n"
+        #         f"Use focused search queries. Avoid general company summaries — dig into meaningful stories and developments."
+        #     )
+        #     web_snippets = self.agent.run(user_prompt)
 
-            if web_snippets:
-                self._store(cid, "web_search", {"summary": web_snippets})
+        #     if web_snippets:
+        #         self._store(cid, "web_search", {"summary": web_snippets})
+
+                #  Web Search (Tavily + Gemini summary)
+        if full_name:
+            search_queries = [
+                f'"{full_name}" leadership style OR management philosophy',
+                f'"{full_name}" career history OR professional background',
+                f'"{full_name}" recent interview OR keynote speech',
+                f'"{full_name}" industry opinion OR thought leadership',
+                f'"{full_name}" achievements OR awards OR recognitions',
+                f'"{full_name}" controversies OR public criticism',
+                f'"{full_name}" future plans OR vision statements',
+            ]
+        if company:
+            search_queries += [
+                f'"{full_name}" role at "{company}"',
+                f'"{full_name}" impact on "{company}" performance',
+            ]
+
+
+
+            aggregated_results = []
+            for query in search_queries:
+                result = tavily_search(query)
+                aggregated_results.append({
+                    "query": query,
+                    "results": result,
+                })
+
+            # Step: Summarize via Gemini LLM
+            summary_prompt = (
+                f"You are an AI research assistant analyzing web search results about the individual \"{full_name}\" "
+                f"and optionally their association with the company \"{company}\".\n\n"
+                f"Here are the search queries and their results:\n\n"
+                f"{json.dumps(aggregated_results, indent=2)}\n\n"
+                f"Summarize the most relevant insights under the following structured headings:\n"
+                f"1. Professional background and career history\n"
+                f"2. Leadership style and management approach\n"
+                f"3. Public interviews, speeches, or thought leadership\n"
+                f"4. Awards, recognitions, or notable achievements\n"
+                f"5. Controversies or public criticism (if any)\n"
+                f"6. Role and influence at {company} (if applicable)\n"
+                f"7. Future plans or stated personal/professional vision\n\n"
+                f"Return the result as **concise, structured JSON**, with keys matching the headings."
+            )
+
+            try:
+                summary_response = self.llm.invoke(summary_prompt)
+                summary_cleaned = summary_response.content.strip()
+                if summary_cleaned.startswith("```"):
+                    summary_cleaned = summary_cleaned.split("\n", 1)[1].rsplit("\n", 1)[0]
+                summary_json = json.loads(summary_cleaned)
+            except Exception as e:
+                summary_json = {"error": f"Failed to summarize: {str(e)}", "raw": summary_cleaned[:1000]}
+
+            # Step: Store both raw and summarized results
+            self._store(cid, "web_search", {
+                "raw_queries": search_queries,
+                "results": aggregated_results,
+                "summary": summary_json,
+            })
+
 
 
                

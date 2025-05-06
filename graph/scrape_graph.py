@@ -11,9 +11,9 @@ class ClientState(TypedDict):
 
 g = StateGraph(state_schema=ClientState)
 
+# g.set_entry_point("scrape")
+
 g.set_entry_point("scrape")
-
-
 g.add_node("scrape", ScraperAgent())
 g.add_node("profile", ProfileBuilderAgent())
 g.add_node("initial", InitialStrategyAgent())
@@ -27,4 +27,5 @@ g.add_edge("initial",END)
 flow = g.compile()
 
 
-flow = g.compile()
+# # flow = g.compile()
+

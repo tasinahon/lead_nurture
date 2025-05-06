@@ -71,7 +71,7 @@ class PersonaliserAgent(Runnable):
         with self.session_factory() as session:
             draft_model = EmailDraft if channel == "email" else MessageDraft
             draft = session.get(draft_model, draft_id)
-            client = session.get(Client, draft.client_id)
+            client = session.get(Client, draft.contact_id)
             profile = session.query(Profile).filter_by(client_id=client.client_id).first()
 
         input_context = {

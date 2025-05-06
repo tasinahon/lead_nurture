@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from typing import Dict, Any
 
 import os
+import json
 from dotenv import load_dotenv
 
 from langchain_core.runnables import Runnable
@@ -43,54 +44,89 @@ class RedraftAgent(Runnable):
             if not prev:
                 return {"status": "error", "detail": f"Draft {draft_id} not found"}
 
-            original_content = (
-                prev.body_markdown if is_email else prev.message_text
-            )
-
-            
-            prompt = (
-                "You are an assistant improving a sales-outreach draft.\n"
-                "----- Original Draft -----\n"
-                f"{original_content}\n"
-                "----- Reviewer Feedback -----\n"
-                f"{feedback}\n"
-                "--------------------------------\n"
-                "Rewrite the draft, applying the feedback precisely while preserving its goal.\n"
-                "Return *only* the improved version."
-            )
-
-            improved_text = self.llm.invoke(prompt).content.strip()
-
-            
-            v_no = self._next_version(prev.campaign_id, is_email)
-
             if is_email:
-                new_draft = EmailDraft(
-                    campaign_id=prev.campaign_id,
-                    version_no=v_no,
-                    body_markdown=improved_text,
-                    is_approved=False,
-                    created_at=datetime.now(timezone.utc)
-                )
+                original_content = f"Subject: {prev.subject}\n\nBody:\n{prev.body_markdown}"
             else:
-                new_draft = MessageDraft(
-                    campaign_id=prev.campaign_id,
-                    version_no=v_no,
-                    message_text=improved_text,
-                    is_approved=False,
-                    created_at=datetime.now(timezone.utc)
-                )
+                original_content = prev.message_text
 
-            s.add(new_draft)
+            
+        prompt = (
+            "You are an assistant improving a sales-outreach draft.\n"
+            "----- Original Draft -----\n"
+            f"{original_content}\n"
+            "----- Reviewer Feedback -----\n"
+            f"{feedback}\n"
+            "--------------------------------\n"
+            "If the draft is an email, return valid JSON with subject and body:\n"
+            "{ \"subject\": \"...\", \"body_markdown\": \"...\" }\n"
+            "If the draft is a message, return just the updated text.\n"
+            "Rewrite the draft, applying the feedback precisely while preserving its goal.\n"
+            "Return *only* the improved version. No markdown formatting like ```json."
+        )
+
+        raw_output = self.llm.invoke(prompt)
+        raw_content = raw_output.content.strip()
+
+        # Remove triple backtick block if present
+        if raw_content.startswith("```"):
+            cleaned = raw_content.split("\n", 1)[1].rsplit("\n", 1)[0]
+        else:
+            cleaned = raw_content
+
+        # Extract subject and body
+        if is_email:
+            try:
+                parsed = json.loads(cleaned)
+                subject = parsed["subject"]
+                body = parsed["body_markdown"]
+            except (json.JSONDecodeError, KeyError):
+                subject = prev.subject
+                body = cleaned
+        else:
+            subject = ""
+            body = cleaned
+
+        v_no = self._next_version(prev.campaign_id, is_email)
+
+        # Delete previous draft and insert new one
+        if is_email:
+            s.delete(prev)
+            s.commit()  # Commit deletion before inserting new draft
+
+            new_draft = EmailDraft(
+                campaign_id=prev.campaign_id,
+                contact_id=prev.contact_id,
+                version_no=v_no,
+                subject=subject,
+                body_markdown=body,
+                is_approved=False,
+                created_at=datetime.now(timezone.utc)
+            )
+        else:
+            s.delete(prev)
             s.commit()
-            s.refresh(new_draft)
+
+            new_draft = MessageDraft(
+                campaign_id=prev.campaign_id,
+                contact_id=prev.contact_id,
+                version_no=v_no,
+                message_text=body,
+                is_approved=False,
+                created_at=datetime.now(timezone.utc)
+            )
+
+        s.add(new_draft)
+        s.commit()
+        s.refresh(new_draft)
 
         return {
             "status": "draft_revised",
             "draft_id": new_draft.draft_id,
-            "draft_content": improved_text,
+            "subject": subject,
+            "draft_content": body,
             "channel": channel
         }
+
 
     def invoke(self, input: Dict[str, Any], config=None):
         return self._call(input)

@@ -65,20 +65,21 @@ class Profile(ProfileBase):
 
 # Campaign Models
 class CampaignBase(BaseModel):
-    name: str
+    name: Optional[str] = None
     description: str
-    tags: str  
+    tags: str
+
 
 class CampaignCreate(CampaignBase):
     user_id: int
-    client_id: Optional[int] = None
-    clientlist_id: Optional[int] = None
+    clientlist_id: int             
+    client_ids: List[int]           
+
 
 class Campaign(CampaignBase):
     campaign_id: int
     user_id: int
-    client_id: Optional[int] = None
-    clientlist_id: Optional[int] = None
+    clientlist_id: int
     created_at: datetime
 
     class Config:
@@ -164,6 +165,7 @@ class MessageDraft(MessageDraftBase):
 # Email Models
 class EmailBase(BaseModel):
     personalized_body: str
+    subject: str
     is_final: bool
 
 class EmailCreate(EmailBase):
@@ -173,9 +175,12 @@ class Email(EmailBase):
     email_id: int
     draft_id: int
     approved_at: Optional[datetime] = None
+    scheduled_at: Optional[datetime] = None  # ➕ REQUIRED for scheduling
+    sent_at: Optional[datetime] = None       # ➕ REQUIRED for tracking
 
     class Config:
         from_attributes = True
+
 
 
 
@@ -320,7 +325,7 @@ class ScrapedData(ScrapedDataBase):
 
 # Communication Models
 class CommunicationBase(BaseModel):
-    channel: str
+    channel: Optional[str]=None
     content: str
 
 class CommunicationCreate(CommunicationBase):
@@ -348,7 +353,7 @@ class ClientListCreate(ClientListBase):
 
 class ClientList(ClientListBase):
     clientlist_id: int
-    user_id: int
+    # user_id: int
 
     class Config:
         from_attributes = True
@@ -364,3 +369,15 @@ class ClientListLink(ClientListLinkBase):
 
     class Config:
         from_attributes = True
+
+
+class FullContactSetupRequest(BaseModel):
+    context_questions: Optional[List[ContextQuestionBase]] = None
+    communications: Optional[List[CommunicationBase]] = None
+
+
+
+
+class ClientWithProfiles(BaseModel):
+    client: Client
+    profiles: List[Profile]

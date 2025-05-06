@@ -1,9 +1,10 @@
 from datetime import datetime, timedelta
 import pytz
+import os
 from apscheduler.schedulers.background import BackgroundScheduler
 from sqlmodel import select
 from db.session import get_session
-from db.database_schema import Email, EmailDraft, Client, Campaign
+from db.database_schema import Email, EmailDraft, Client
 import smtplib
 from email.mime.text import MIMEText
 
@@ -21,7 +22,6 @@ class EmailSenderAgent:
                     EmailDraft.campaign_id == campaign_id
                 )
             ).all()
-
             return all(email.approved_at is not None for email in emails)
 
     def get_next_office_hour(self) -> datetime:
@@ -32,7 +32,7 @@ class EmailSenderAgent:
         if now.hour >= 18:
             scheduled_time += timedelta(days=1)
 
-        while scheduled_time.weekday() in [4, 5]:  # Skip Friday(4) and Saturday(5)
+        while scheduled_time.weekday() in [4, 5]: 
             scheduled_time += timedelta(days=1)
 
         return scheduled_time
@@ -67,36 +67,39 @@ class EmailSenderAgent:
         print(f"Emails scheduled for campaign {campaign_id} at {scheduled_time}")
 
     def send_email(self, recipient_email: str, subject: str, body: str):
-        sender_email = "your-email@example.com"
-        password = "your-email-password"
+        sender_email = os.getenv("SMTP_EMAIL")
+        password = os.getenv("SMTP_PASSWORD")
 
         msg = MIMEText(body, "html")
         msg['Subject'] = subject
         msg['From'] = sender_email
         msg['To'] = recipient_email
 
-        with smtplib.SMTP_SSL("smtp.your-email-provider.com", 465) as server:
-            server.login(sender_email, password)
-            server.sendmail(sender_email, recipient_email, msg.as_string())
+        try:
+            with smtplib.SMTP_SSL("smtp.your-email-provider.com", 465) as server:
+                server.login(sender_email, password)
+                server.sendmail(sender_email, recipient_email, msg.as_string())
+            print(f"[SENT] Email to {recipient_email}")
+        except Exception as e:
+            print(f"[ERROR] Failed to send email to {recipient_email}: {str(e)}")
 
     def send_emails_job(self, campaign_id: int):
         with self.session_factory() as session:
-            emails = session.exec(
+            results = session.exec(
                 select(Email, EmailDraft, Client)
-                .join(EmailDraft, EmailDraft.draft_id == Email.draft_id)
-                .join(Client, Client.client_id == EmailDraft.client_id)
+                .join(EmailDraft, Email.draft_id == EmailDraft.draft_id)
+                .join(Client, Client.client_id == EmailDraft.contact_id)
                 .where(
                     EmailDraft.campaign_id == campaign_id,
                     Email.sent_at == None
                 )
             ).all()
 
-            for email, draft, client in emails:
-                self.send_email(client.email, "Your Campaign Subject", email.personalized_body)
+            for email, draft, client in results:
+                self.send_email(client.email, draft.subject, email.personalized_body)
                 email.sent_at = datetime.now(pytz.timezone('Asia/Dhaka'))
                 session.add(email)
 
             session.commit()
 
         print(f"Emails sent successfully for campaign: {campaign_id}")
-    

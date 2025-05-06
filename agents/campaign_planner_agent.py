@@ -95,7 +95,7 @@ class CampaignPlannerAgent(Runnable):
             ("system", (
                 "You are a senior AI campaign strategist responsible for building multi-day communication plans for email or message campaigns.\n"
                 "\n"
-                "Your job is to generate a campaign plan (minimum 2 days, typically 3–5) for outreach based on:\n"
+                "Your job is to generate a campaign plan (minimum 3 days, typically 5–7) for outreach based on:\n"
                 "- A campaign description (goal, context, brand intent)\n"
                 "- A list of campaign tags (e.g., 'Marketing', 'Exclusive', 'Follow-up')\n"
                 "\n"
@@ -141,20 +141,27 @@ class CampaignPlannerAgent(Runnable):
 
     def _get_context_single(self, campaign: Campaign) -> str:
         with self.session_factory() as s:
-            profile = s.query(Profile).filter_by(client_id=campaign.client_id).first()
-            qna = s.query(ContextQuestion).filter_by(client_id=campaign.client_id).all()
-            comms = s.query(Communication).filter_by(client_id=campaign.client_id).all()
+            links = s.query(ClientListLink).filter_by(list_id=campaign.clientlist_id).all()
+            if len(links) != 1:
+                raise ValueError("Expected exactly one client in list for single-client campaign.")
+
+            client_id = links[0].client_id
+
+            profile = s.query(Profile).filter_by(client_id=client_id).first()
+            qna = s.query(ContextQuestion).filter_by(client_id=client_id).all()
+            comms = s.query(Communication).filter_by(client_id=client_id).all()
 
         context = {
             "type": "single",
             "campaign_description": campaign.description,
             "tags": campaign.tags or [],
-            "profile_summary": profile.summary,
-            "persona_text": profile.full_text,
+            "profile_summary": profile.summary if profile else "",
+            "persona_text": profile.full_text if profile else "",
             "qna": [{"q": q.question, "a": q.answer} for q in qna if q.answer],
             "communications": [{"title": c.title, "body": c.body} for c in comms]
         }
         return json.dumps(context, ensure_ascii=False)
+
 
     def _get_context_list(self, campaign: Campaign) -> str:
         import random
@@ -189,8 +196,9 @@ class CampaignPlannerAgent(Runnable):
 
         with self.session_factory() as s:
             campaign = s.query(Campaign).get(campaign_id)
+            links = s.query(ClientListLink).filter_by(list_id=campaign.clientlist_id).all()
 
-        mode = "list" if campaign.clientlist_id else "single"
+        mode = "single" if len(links) == 1 else "list"
 
         if mode == "single":
             context = self._get_context_single(campaign)
@@ -205,18 +213,14 @@ class CampaignPlannerAgent(Runnable):
         raw_output = self.llm.invoke(formatted)
         raw_content = raw_output.content.strip()
 
-        # Remove markdown code block if present
+        # Remove markdown block if present
         if raw_content.startswith("```"):
             cleaned_content = raw_content.split("\n", 1)[1].rsplit("\n", 1)[0]
         else:
             cleaned_content = raw_content
 
-        # Parse JSON into dict
         parsed_dict = self.parser.parse(cleaned_content)
-
-        # Convert dict to Pydantic object
         parsed = CampaignPlanSchema(**parsed_dict)
-
 
         with self.session_factory() as s:
             for day in parsed.days:
@@ -237,6 +241,7 @@ class CampaignPlannerAgent(Runnable):
             "day_count": len(parsed.days),
             "days": parsed.days
         }
+
 
     def invoke(self, input: Dict[str, Any], config=None):
         return self._call(input)

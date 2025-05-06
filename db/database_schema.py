@@ -28,6 +28,7 @@ class Client(SQLModel, table=True):
 
 class ClientList(SQLModel, table=True):
     clientlist_id: int = Field(default=None, primary_key=True)
+    # user_id: int = Field(foreign_key="user.user_id") 
     name: str  
     description: Optional[str] = None
 
@@ -104,8 +105,12 @@ class Email(SQLModel, table=True):
     email_id: int = Field(default=None, primary_key=True)
     draft_id: int = Field(foreign_key="emaildraft.draft_id")
     personalized_body: str
+    subject:str
     is_final: bool
     approved_at: Optional[datetime] = None
+    scheduled_at: Optional[datetime] = None  
+    sent_at: Optional[datetime] = None       
+
 
 
 class Message(SQLModel, table=True):
@@ -172,12 +177,12 @@ class Communication(SQLModel, table=True):
 class Campaign(SQLModel, table=True):
     campaign_id: int = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="user.user_id")
-    client_id: Optional[int] = Field(default=None, foreign_key="client.client_id")
-    clientlist_id: Optional[int] = Field(default=None, foreign_key="clientlist.clientlist_id")   
-    name: str
+    clientlist_id: int = Field(foreign_key="clientlist.clientlist_id")
+    name: Optional[str] = None
     description: str
-    tags: str  
+    tags: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
 
 
 

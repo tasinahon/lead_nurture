@@ -40,7 +40,7 @@ prompt = ChatPromptTemplate.from_messages([
 
     3. **preferred_language** (string): The primary language the client is most comfortable communicating in (e.g., "English", "Spanish"). If not available, assume "English".
 
-    4. **preferred_contact** (string): The platform the client prefers for communication, based on hints from their activity or context (choose one: 'Email', 'WhatsApp', 'LinkedIn'). If unclear, guess reasonably.
+    4. **preferred_contact** (string): The platform the client prefers for communication, based on hints from their activity or context (choose one: 'Email', 'WhatsApp'). If unclear, guess reasonably.
 
     5. **engagement_times** (string): Suggest best times to engage the client based on behavior. Example: "Monday". If unknown, keep empty.
 

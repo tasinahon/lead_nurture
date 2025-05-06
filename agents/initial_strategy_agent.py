@@ -31,43 +31,43 @@ class InitialStrategyAgent(Runnable):
     def _build_prompt(self):
         return ChatPromptTemplate.from_messages([
             ("system", """
-        You are an expert communication strategist helping to initiate a campaign for a new client.
+                You are an expert communication strategist helping to initiate a campaign for a new client.
 
-        You will receive the client’s profile information based only on scraped online sources (like LinkedIn, websites). These may not be complete — your job is to make **best-effort strategic guesses**.
+                You will receive the client’s profile information based only on scraped online sources (like LinkedIn, websites). These may not be complete — your job is to make **best-effort strategic guesses**.
 
-        Use this profile context:
-        - Summary of their professional background and tone
-        - Inferred interests
-        - Preferred language and communication channel
-        - Engagement timing hints (if any)
-        - Full Text (detail info about client)
-        - Contextual Q&A: additional background, goals, or communication expectations (when available)
+                Use this profile context:
+                - Summary of their professional background and tone
+                - Inferred interests
+                - Preferred language and communication channel
+                - Engagement timing hints (if any)
+                - Full Text (detail info about client)
+                - Contextual Q&A: additional background, goals, or communication expectations (when available)
 
-        Your Goal:
-        Generate an initial strategy recommendation for outreach — even if incomplete.
+                Your Goal:
+                Generate an initial strategy recommendation for outreach — even if incomplete.
 
-        Return this JSON structure:
-        {
-        "engagement_channel": "Email | WhatsApp | LinkedIn | Unknown",
-        "tone_style": "Formal | Friendly | Concise | Warm | Persuasive | ...",
-        "communication_frequency": "1 per week | 1 every 3 days | Daily | ...",
-        "general_advice": "Custom notes on how best to approach the client"
-        }
+                Return this JSON structure:
+                {{
+                "engagement_channel": "Email | WhatsApp | LinkedIn | Unknown",
+                "tone_style": "Formal | Friendly | Concise | Warm | Persuasive | ...",
+                "communication_frequency": "1 per week | 1 every 3 days | Daily | ...",
+                "general_advice": "Custom notes on how best to approach the client"
+                }}
 
-        Notes:
-        - If platform preference is unknown, default to 'Email'
-        - If no engagement_times, guess based on industry or leave blank
-        - Be polite but proactive. This is an **initial** strategy — it's okay to revise later.
-        - Keep all values short and useful. Your output should be used by email/message generation agents.
-        - Guess conservatively if info is missing.
-        - Always use context_qna if available — it often has insights about tone, language, or timing.
+                Notes:
+                - If platform preference is unknown, default to 'email'
+                - If no engagement_times, guess based on industry or leave blank
+                - Be polite but proactive. This is an **initial** strategy — it's okay to revise later.
+                - Keep all values short and useful. Your output should be used by email/message generation agents.
+                - Guess conservatively if info is missing.
+                - Always use context_qna if available — it often has insights about tone, language, or timing.
 
+                Return valid JSON only.
+                {format_instructions}
+                """),
+                        ("user", "{input_context}")
+                    ])
 
-        Return valid JSON only.
-        {format_instructions}
-        """),
-            ("user", "{profile_context}")
-        ])
 
 
 
@@ -112,22 +112,31 @@ class InitialStrategyAgent(Runnable):
 
 
         try:
+    # Patch: wrap in curly braces if missing (common LLM mistake)
+            if not cleaned.strip().startswith("{"):
+                cleaned = "{" + cleaned.strip()
+            if not cleaned.strip().endswith("}"):
+                cleaned = cleaned.strip() + "}"
+
             parsed_dict = json.loads(cleaned)
+            print("cleaned__________________________________________________________________")
+            print(cleaned)
+            print("parsed_dict_______________________")
+            print(parsed_dict)
             parsed = StrategyOutput(**parsed_dict)
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
-            # Fallback to defaults
+        except Exception as e:
             parsed = StrategyOutput(
-                engagement_channel='Email',
+                engagement_channel='email',
                 tone_style='Formal',
                 communication_frequency='1 per week',
-                general_advice=cleaned[:200]  # Use cleaned content as fallback advice
+                general_advice=f"[ParseError] {str(e)} | Raw: {cleaned[:200]}"
             )
 
         # Step 5: Store result in InitialStrategy table
         with self.session_factory() as session:
             strategy = InitialStrategy(
                 client_id=client_id,
-                engagement_channel=parsed.engagement_channel or 'Email',
+                engagement_channel=parsed.engagement_channel or 'email',
                 tone_style=parsed.tone_style,
                 communication_frequency=parsed.communication_frequency,
                 general_advice=parsed.general_advice,
