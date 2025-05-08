@@ -67,13 +67,12 @@ class RedraftAgent(Runnable):
         raw_output = self.llm.invoke(prompt)
         raw_content = raw_output.content.strip()
 
-        # Remove triple backtick block if present
         if raw_content.startswith("```"):
             cleaned = raw_content.split("\n", 1)[1].rsplit("\n", 1)[0]
         else:
             cleaned = raw_content
 
-        # Extract subject and body
+        
         if is_email:
             try:
                 parsed = json.loads(cleaned)
@@ -96,6 +95,7 @@ class RedraftAgent(Runnable):
             new_draft = EmailDraft(
                 campaign_id=prev.campaign_id,
                 contact_id=prev.contact_id,
+                day = prev.day,
                 version_no=v_no,
                 subject=subject,
                 body_markdown=body,
@@ -109,6 +109,7 @@ class RedraftAgent(Runnable):
             new_draft = MessageDraft(
                 campaign_id=prev.campaign_id,
                 contact_id=prev.contact_id,
+                day = prev.day,
                 version_no=v_no,
                 message_text=body,
                 is_approved=False,

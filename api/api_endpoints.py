@@ -1,4 +1,7 @@
+import time
 from fastapi import FastAPI, Depends, HTTPException,BackgroundTasks
+from agents.email_finder_agent import find_email_via_agent
+from agents.initial_strategy_agent import InitialStrategyAgent
 from graph.strategy_graph import strategy_graph
 from sqlmodel import Session, select
 from fastapi import APIRouter
@@ -23,7 +26,7 @@ import traceback
 # from graph.redraft_graph import redraft_phase
 import logging
 from db.Pydantic_DataModels import (
-    ClientWithProfiles, ContextQuestionBatchCreate, User, UserCreate,
+    ClientWithProfiles, CombinedOut, ContextQuestionBatchCreate, User, UserCreate,
     Client, ClientCreate,
     Profile, ProfileCreate,
     Campaign, CampaignCreate,
@@ -96,6 +99,27 @@ def read_clients(user_id: int, session: Session = Depends(get_session)):
 
 
 
+# @router.post("/users/{user_id}/clients/", response_model=Client)
+# def create_client(user_id: int, client: ClientCreate, session: Session = Depends(get_session)):
+#     user = session.get(UserModel, user_id)
+#     if not user:
+#         raise HTTPException(status_code=404, detail="User not found")
+#     if client.user_id != user_id:
+#         raise HTTPException(status_code=400, detail="User ID mismatch")
+
+#     db_client = ClientModel(**client.dict(), created_at=datetime.utcnow())
+#     session.add(db_client)
+#     session.commit()
+#     session.refresh(db_client)
+
+    
+#     try:
+#         flow.invoke({"client_id": db_client.client_id}) 
+#     except Exception as e:
+#         print(f"Graph failed {db_client.client_id}: {e}")
+
+#     return db_client
+
 @router.post("/users/{user_id}/clients/", response_model=Client)
 def create_client(user_id: int, client: ClientCreate, session: Session = Depends(get_session)):
     user = session.get(UserModel, user_id)
@@ -104,18 +128,32 @@ def create_client(user_id: int, client: ClientCreate, session: Session = Depends
     if client.user_id != user_id:
         raise HTTPException(status_code=400, detail="User ID mismatch")
 
+    
+
+    
+    if client.email=="" and client.full_name and client.linkedin_url:
+        email = find_email_via_agent(client.full_name, client.linkedin_url)
+        if email:  # This checks that email is not None or empty
+            client.email = email
+
+    # if not client.email:
+    #     raise HTTPException(
+    #         status_code=400,
+    #         detail="Email could not be determined via agent and is required."
+    #     )
+
     db_client = ClientModel(**client.dict(), created_at=datetime.utcnow())
     session.add(db_client)
     session.commit()
     session.refresh(db_client)
 
-    
     try:
         flow.invoke({"client_id": db_client.client_id}) 
     except Exception as e:
         print(f"Graph failed {db_client.client_id}: {e}")
 
     return db_client
+
 
 
 
@@ -413,10 +451,10 @@ async def create_feedback(
     else:
         raise HTTPException(status_code=400, detail="Invalid feedback stage")
     
-    # if is_email:
-    #     sender = EmailSenderAgent()
-    #     if sender.all_emails_approved(draft.campaign_id):
-    #         sender.schedule_emails(draft.campaign_id)
+    if is_email:
+        sender = EmailSenderAgent()
+        if sender.all_emails_approved(draft.campaign_id):
+            sender.schedule_emails(draft.campaign_id)
 
     return db_feedback
 
@@ -433,6 +471,35 @@ def read_context_questions(client_id: int, session: Session = Depends(get_sessio
     questions = session.exec(select(ContextQuestionModel).where(ContextQuestionModel.client_id == client_id)).all()
     return questions
 
+
+
+# get mails/messages of certain day of a campaign
+@router.get("/campaigns/{campaign_id}/day/{day}/comms/", response_model=CombinedOut)
+def get_emails_and_messages_by_campaign_and_day(
+    campaign_id: int,
+    day: int,
+    session: Session = Depends(get_session)
+):
+    
+    emails = (
+        session.query(Email)
+        .join(EmailDraft, Email.draft_id == EmailDraft.draft_id)
+        .filter(EmailDraft.campaign_id == campaign_id, EmailDraft.day == day)
+        .all()
+    )
+
+    
+    messages = (
+        session.query(Message)
+        .join(MessageDraft, Message.draft_id == MessageDraft.draft_id)
+        .filter(MessageDraft.campaign_id == campaign_id, MessageDraft.day == day)
+        .all()
+    )
+
+    return {
+        "emails": emails,
+        "messages": messages
+    }
 
 
 
@@ -739,17 +806,18 @@ def run_campaign_plan_and_drafts(campaign_id: int):
         
         for client_id in client_ids:
             for day in days:
+                day_num = int(day.strip().split()[-1])
                 if 'email' in channels:
                     EmailDraftAgent().invoke({
                         "campaign_id": campaign_id,
                         "contact_id": client_id,
-                        "day": day
+                        "day": day_num
                     })
-                if 'message' in channels:
+                else:
                     DraftMessageAgent().invoke({
                         "campaign_id": campaign_id,
                         "contact_id": client_id,
-                        "day": day
+                        "day": day_num
                     })
 
 
@@ -849,6 +917,8 @@ def full_contact_setup(
 
     
     ProfileUpdateAgent().invoke({"client_id": client_id})
+    time.sleep(0.5)  
+    InitialStrategyAgent().invoke({"client_id": client_id})
 
     return {"status": "success", "client_id": client_id}
 

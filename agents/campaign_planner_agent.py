@@ -95,7 +95,7 @@ class CampaignPlannerAgent(Runnable):
             ("system", (
                 "You are a senior AI campaign strategist responsible for building multi-day communication plans for email or message campaigns.\n"
                 "\n"
-                "Your job is to generate a campaign plan (minimum 3 days, typically 5–7) for outreach based on:\n"
+                "Your job is to generate a campaign plan (minimum 2 days, typically 3–5) for outreach based on:\n"
                 "- A campaign description (goal, context, brand intent)\n"
                 "- A list of campaign tags (e.g., 'Marketing', 'Exclusive', 'Follow-up')\n"
                 "\n"

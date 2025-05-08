@@ -61,6 +61,9 @@ EMAIL_GENERATION_PROMPT = """
     - If the goal is personal connection, use storytelling or empathy.
     - Include a clear, relevant call-to-action in the closing (meeting, reply, etc.).
     - Make sure it follows natural human email tone.
+    - Never include any bracketed or placeholder text like [mention something here].
+    - If specific company types or benefits are unknown, write in general terms that still sound complete and persuasive.
+
 
     Output Format:
     Return only this JSON format:
@@ -95,9 +98,9 @@ class EmailDraftAgent(Runnable):
         prompt = "Summarize:\n" + "\n".join(messages)
         return self.llm.predict(prompt).strip()
     
-    def _next_version(self, campaign_id: int) -> int:
+    def _next_version(self, campaign_id: int,contact_id: int, day: int) -> int:
         with self._sf() as s:
-            return s.query(EmailDraft).filter_by(campaign_id=campaign_id).count() + 1
+            return s.query(EmailDraft).filter_by(campaign_id=campaign_id, contact_id=contact_id, day=day).count() + 1
 
     def _call(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
         campaign_id = inputs["campaign_id"]
@@ -157,12 +160,13 @@ class EmailDraftAgent(Runnable):
 
 
         with self._sf() as s:
-            version = self._next_version(campaign_id)
+            version = self._next_version(campaign_id,contact_id,day)
             draft = EmailDraft(
                 campaign_id=campaign_id,
                 contact_id=contact_id,
                 version_no=version,
                 subject=subject,
+                day=day,
                 body_markdown=body,
                 is_approved=False,
                 created_at=datetime.utcnow()

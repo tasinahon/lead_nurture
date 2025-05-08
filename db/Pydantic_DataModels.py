@@ -122,6 +122,7 @@ class Strategy(StrategyBase):
 
 # EmailDraft Models
 class EmailDraftBase(BaseModel):
+    day: int
     version_no: int
     body_markdown: str
     subject: str
@@ -145,6 +146,7 @@ class EmailDraft(EmailDraftBase):
 # MessageDraft
 
 class MessageDraftBase(BaseModel):
+    day: int
     version_no: int
     message_text: str
     is_approved: bool
@@ -381,3 +383,28 @@ class FullContactSetupRequest(BaseModel):
 class ClientWithProfiles(BaseModel):
     client: Client
     profiles: List[Profile]
+
+
+
+class EmailOut(BaseModel):
+    email_id: int
+    subject: str
+    personalized_body: str
+    draft_id: int
+    day: int
+
+    class Config:
+        orm_mode = True
+
+class MessageOut(BaseModel):
+    message_id: int
+    personalized_text: str
+    draft_id: int
+    day: int
+
+    class Config:
+        orm_mode = True
+
+class CombinedOut(BaseModel):
+    emails: List[EmailOut]
+    messages: List[MessageOut]

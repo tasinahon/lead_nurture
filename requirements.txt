@@ -234,3 +234,5 @@ email-validator
 qdrant-client
 sqlmodel
 langchain-google-genai
+apscheduler
+pytz

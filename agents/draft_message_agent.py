@@ -25,10 +25,51 @@ load_dotenv()
 # )
 
 
-MESSAGE_GENERATION_PROMPT = """
-You are an AI assistant helping create **professional, personalized WhatsApp messages** for a business campaign.
+# MESSAGE_GENERATION_PROMPT = """
+# You are an AI assistant helping create **professional, personalized WhatsApp messages** for a business campaign.
 
-Your goal is to generate a clear, concise message for **{day}** of a multi-day campaign, based on campaign strategy and client insights.
+# Your goal is to generate a clear, concise message for **{day}** of a multi-day campaign, based on campaign strategy and client insights.
+
+# Plan for This Day:
+# - **Title**: {title}
+# - **Message Goal**: {goal}
+# - **Key Idea**: {body_idea}
+
+# Who is the recipient?
+# - **Profile Summary**: {profile_summary}
+# - **Interests**: {interests}
+# - **Preferred Language**: {preferred_language}
+
+# Recent Communication:
+# {recent_communications}
+
+# Sender Info:
+# - **Name**: {sender_name}
+
+# Strategy Advice:
+# - **General Advice**: {general_advice}
+
+# Writing Guidelines:
+# - Keep it short, friendly, and clear.
+# - Use a human tone, like a WhatsApp message from a business contact.
+# - Avoid overly formal or robotic language.
+# - End with a soft CTA (e.g., “Let me know”, “Would love to hear your thoughts”, etc.)
+# - Never include any bracketed or placeholder text like [mention something here].
+# - If specific company types or benefits are unknown, write in general terms that still sound complete and persuasive.
+
+# Output Format:
+# Return only this JSON format:
+# {{
+# "message_text": "Your full WhatsApp message text"
+# }}
+
+# Do not include extra text or explanations.
+# """
+
+MESSAGE_GENERATION_PROMPT = """
+You are an AI assistant helping create **professional, personalized outreach messages** for a business campaign.
+
+Your job is to generate a message for **{day}** of a multi-day campaign. The message will be sent via **{channel}** (e.g., WhatsApp, LinkedIn), so you must adapt the tone and format accordingly.
 
 Plan for This Day:
 - **Title**: {title}
@@ -39,6 +80,7 @@ Who is the recipient?
 - **Profile Summary**: {profile_summary}
 - **Interests**: {interests}
 - **Preferred Language**: {preferred_language}
+- **Channel**: {channel}
 
 Recent Communication:
 {recent_communications}
@@ -50,19 +92,23 @@ Strategy Advice:
 - **General Advice**: {general_advice}
 
 Writing Guidelines:
-- Keep it short, friendly, and clear.
-- Use a human tone, like a WhatsApp message from a business contact.
-- Avoid overly formal or robotic language.
-- End with a soft CTA (e.g., “Let me know”, “Would love to hear your thoughts”, etc.)
+- Adjust tone and length based on the channel:
+    - For **WhatsApp**: Keep it short, warm, and informal (but professional).
+    - For **LinkedIn**: Keep it professional, brief, and respectful. No emojis or overly casual phrasing.
+- Always sound human — not robotic or overly scripted.
+- Avoid any bracketed or placeholder text like [mention something here].
+- If you lack specifics (like company names, percentages, etc.), write in general terms that still sound persuasive and complete.
+- End with a soft call-to-action (e.g., “Let me know”, “Would love your thoughts”, “Open to a quick chat?”).
 
 Output Format:
-Return only this JSON format:
+Return only this JSON:
 {{
-"message_text": "Your full WhatsApp message text"
+"message_text": "Your full outreach message"
 }}
-
 Do not include extra text or explanations.
+Only return the JSON. Do not include any extra text or explanations.
 """
+
 
 class DraftMessageAgent(Runnable):
     def __init__(self):
@@ -84,9 +130,9 @@ class DraftMessageAgent(Runnable):
         prompt = "Summarize:\n" + "\n".join(messages)
         return self.llm.predict(prompt).strip()
 
-    def _next_version(self, campaign_id: int) -> int:
+    def _next_version(self, campaign_id: int,contact_id: int, day: int) -> int:
         with self._sf() as s:
-            return s.query(MessageDraft).filter_by(campaign_id=campaign_id).count() + 1
+            return s.query(MessageDraft).filter_by(campaign_id=campaign_id, contact_id=contact_id, day=day).count() + 1
 
     def _call(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
         campaign_id = inputs["campaign_id"]
@@ -102,6 +148,8 @@ class DraftMessageAgent(Runnable):
                 .first()
             )
             profile = s.query(Profile).filter_by(client_id=contact_id).first()
+            channel = profile.preferred_contact  
+
             strategy = s.query(InitialStrategy).filter_by(client_id=contact_id).first()
             general_advice = strategy.general_advice if strategy else "No strategy advice available."
 
@@ -117,6 +165,7 @@ class DraftMessageAgent(Runnable):
             preferred_language=profile.preferred_language,
             sender_name=user.name,
             general_advice=general_advice,
+            channel=channel,
             recent_communications=comms_summary
         )
 
@@ -135,10 +184,11 @@ class DraftMessageAgent(Runnable):
             message_text = cleaned
 
         with self._sf() as s:
-            version = self._next_version(campaign_id)
+            version = self._next_version(campaign_id,contact_id,day)
             draft = MessageDraft(
                 campaign_id=campaign_id,
                 contact_id=contact_id,
+                day=day,
                 version_no=version,
                 message_text=message_text,
                 is_approved=False,

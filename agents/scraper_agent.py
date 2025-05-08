@@ -2,6 +2,7 @@ import os, re, json, requests
 from datetime import datetime
 from urllib.parse import urlparse
 from typing import Dict, Any, List, Optional
+import time
 
 from dotenv import load_dotenv
 from langchain_core.runnables import Runnable, RunnableConfig
@@ -130,13 +131,18 @@ class ScraperAgent(Runnable):
 
        
         if linkedin_url:
+            print("yes----------------------------------------")
             prof_response = requests.get(
                 f"{RAPID_BASE}/get-profile-data-by-url",
                 headers=headers,
                 params={"url": linkedin_url},
             )
-            if prof_response.ok:
+            # time.sleep(1.5)
+            print(prof_response)
+            print(headers)
+            if prof_response.status_code == 200:
                 prof = prof_response.json()
+                print(prof.get("summary"))
                 filtered_prof = {
                     "summary": prof.get("summary"),
                     "headline": prof.get("headline"),
@@ -160,6 +166,8 @@ class ScraperAgent(Runnable):
             )
             if posts_response.ok:
                 posts = posts_response.json()
+                print("posts-------------------")
+                print(posts)
                 filtered_posts = [
                     {
                         "text": post.get("text"),
@@ -168,6 +176,7 @@ class ScraperAgent(Runnable):
                     }
                     for post in posts.get("data", [])
                 ]
+                print(filtered_posts)
 
                 if filtered_posts:
                     enriched_posts = self.enrich_posts_with_llm(filtered_posts, full_name, company)
@@ -194,64 +203,64 @@ class ScraperAgent(Runnable):
         #         self._store(cid, "web_search", {"summary": web_snippets})
 
                 #  Web Search (Tavily + Gemini summary)
-        if full_name:
-            search_queries = [
-                f'"{full_name}" leadership style OR management philosophy',
-                f'"{full_name}" career history OR professional background',
-                f'"{full_name}" recent interview OR keynote speech',
-                f'"{full_name}" industry opinion OR thought leadership',
-                f'"{full_name}" achievements OR awards OR recognitions',
-                f'"{full_name}" controversies OR public criticism',
-                f'"{full_name}" future plans OR vision statements',
-            ]
-        if company:
-            search_queries += [
-                f'"{full_name}" role at "{company}"',
-                f'"{full_name}" impact on "{company}" performance',
-            ]
+        # if full_name:
+        #     search_queries = [
+        #         f'"{full_name}" leadership style OR management philosophy',
+        #         f'"{full_name}" career history OR professional background',
+        #         f'"{full_name}" recent interview OR keynote speech',
+        #         f'"{full_name}" industry opinion OR thought leadership',
+        #         f'"{full_name}" achievements OR awards OR recognitions',
+        #         f'"{full_name}" controversies OR public criticism',
+        #         f'"{full_name}" future plans OR vision statements',
+        #     ]
+        # if company:
+        #     search_queries += [
+        #         f'"{full_name}" role at "{company}"',
+        #         f'"{full_name}" impact on "{company}" performance',
+        #     ]
 
 
 
-            aggregated_results = []
-            for query in search_queries:
-                result = tavily_search(query)
-                aggregated_results.append({
-                    "query": query,
-                    "results": result,
-                })
+        #     aggregated_results = []
+        #     for query in search_queries:
+        #         result = tavily_search(query)
+        #         aggregated_results.append({
+        #             "query": query,
+        #             "results": result,
+        #         })
 
-            # Step: Summarize via Gemini LLM
-            summary_prompt = (
-                f"You are an AI research assistant analyzing web search results about the individual \"{full_name}\" "
-                f"and optionally their association with the company \"{company}\".\n\n"
-                f"Here are the search queries and their results:\n\n"
-                f"{json.dumps(aggregated_results, indent=2)}\n\n"
-                f"Summarize the most relevant insights under the following structured headings:\n"
-                f"1. Professional background and career history\n"
-                f"2. Leadership style and management approach\n"
-                f"3. Public interviews, speeches, or thought leadership\n"
-                f"4. Awards, recognitions, or notable achievements\n"
-                f"5. Controversies or public criticism (if any)\n"
-                f"6. Role and influence at {company} (if applicable)\n"
-                f"7. Future plans or stated personal/professional vision\n\n"
-                f"Return the result as **concise, structured JSON**, with keys matching the headings."
-            )
+        #     # Step: Summarize via Gemini LLM
+        #     summary_prompt = (
+        #         f"You are an AI research assistant analyzing web search results about the individual \"{full_name}\" "
+        #         f"and optionally their association with the company \"{company}\".\n\n"
+        #         f"Here are the search queries and their results:\n\n"
+        #         f"{json.dumps(aggregated_results, indent=2)}\n\n"
+        #         f"Summarize the most relevant insights under the following structured headings:\n"
+        #         f"1. Professional background and career history\n"
+        #         f"2. Leadership style and management approach\n"
+        #         f"3. Public interviews, speeches, or thought leadership\n"
+        #         f"4. Awards, recognitions, or notable achievements\n"
+        #         f"5. Controversies or public criticism (if any)\n"
+        #         f"6. Role and influence at {company} (if applicable)\n"
+        #         f"7. Future plans or stated personal/professional vision\n\n"
+        #         f"Return the result as **concise, structured JSON**, with keys matching the headings."
+        #     )
 
-            try:
-                summary_response = self.llm.invoke(summary_prompt)
-                summary_cleaned = summary_response.content.strip()
-                if summary_cleaned.startswith("```"):
-                    summary_cleaned = summary_cleaned.split("\n", 1)[1].rsplit("\n", 1)[0]
-                summary_json = json.loads(summary_cleaned)
-            except Exception as e:
-                summary_json = {"error": f"Failed to summarize: {str(e)}", "raw": summary_cleaned[:1000]}
+        #     try:
+        #         summary_response = self.llm.invoke(summary_prompt)
+        #         summary_cleaned = summary_response.content.strip()
+        #         if summary_cleaned.startswith("```"):
+        #             summary_cleaned = summary_cleaned.split("\n", 1)[1].rsplit("\n", 1)[0]
+        #         summary_json = json.loads(summary_cleaned)
+        #     except Exception as e:
+        #         summary_json = {"error": f"Failed to summarize: {str(e)}", "raw": summary_cleaned[:1000]}
 
-            # Step: Store both raw and summarized results
-            self._store(cid, "web_search", {
-                "raw_queries": search_queries,
-                "results": aggregated_results,
-                "summary": summary_json,
-            })
+        #     # Step: Store both raw and summarized results
+        #     self._store(cid, "web_search", {
+        #         "raw_queries": search_queries,
+        #         "results": aggregated_results,
+        #         "summary": summary_json,
+        #     })
 
 
 

@@ -76,14 +76,14 @@ class InitialStrategyAgent(Runnable):
     def _call(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
         client_id = inputs["client_id"]
 
-        # Step 1: Load profile from DB
+        
         with self.session_factory() as session:
             profile = session.query(Profile).filter_by(client_id=client_id).first()
             if not profile:
                 raise ValueError("No profile found for client")
             qna = session.query(ContextQuestion).filter_by(client_id=client_id).all()
 
-        # Step 2: Prepare input context
+        
         input_context = json.dumps({
             "summary": profile.summary,
             "interests": profile.interests,
@@ -94,17 +94,17 @@ class InitialStrategyAgent(Runnable):
             "context_qna": [{"question": q.question, "answer": q.answer} for q in qna]
         }, ensure_ascii=False)
 
-        # Step 3: Format the prompt
+        
         formatted_prompt = self.prompt.format_prompt(
             input_context=input_context,
             format_instructions=self.parser.get_format_instructions()
         ).to_string()
 
-        # Step 4: Call the LLM
+        
         raw_output = self.llm.invoke(formatted_prompt)
         raw_content = raw_output.content.strip()
 
-        # Remove triple backtick code block markers if present
+        
         if raw_content.startswith("```"):
             cleaned = raw_content.split("\n", 1)[1].rsplit("\n", 1)[0]
         else:
@@ -112,17 +112,13 @@ class InitialStrategyAgent(Runnable):
 
 
         try:
-    # Patch: wrap in curly braces if missing (common LLM mistake)
+    
             if not cleaned.strip().startswith("{"):
                 cleaned = "{" + cleaned.strip()
             if not cleaned.strip().endswith("}"):
                 cleaned = cleaned.strip() + "}"
 
             parsed_dict = json.loads(cleaned)
-            print("cleaned__________________________________________________________________")
-            print(cleaned)
-            print("parsed_dict_______________________")
-            print(parsed_dict)
             parsed = StrategyOutput(**parsed_dict)
         except Exception as e:
             parsed = StrategyOutput(
@@ -132,8 +128,14 @@ class InitialStrategyAgent(Runnable):
                 general_advice=f"[ParseError] {str(e)} | Raw: {cleaned[:200]}"
             )
 
-        # Step 5: Store result in InitialStrategy table
+        
         with self.session_factory() as session:
+            # existing = session.query(InitialStrategy).filter_by(client_id=client_id).first()
+            # if existing:
+            #     session.delete(existing)
+            #     session.commit() 
+            session.query(InitialStrategy).filter_by(client_id=client_id).delete()
+            session.commit()
             strategy = InitialStrategy(
                 client_id=client_id,
                 engagement_channel=parsed.engagement_channel or 'email',

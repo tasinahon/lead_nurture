@@ -88,6 +88,7 @@ class EmailDraft(SQLModel, table=True):
     contact_id: int = Field(foreign_key="client.client_id")
     version_no: int
     subject:str
+    day: int
     body_markdown: str
     is_approved: bool
     created_at: datetime
@@ -97,6 +98,7 @@ class MessageDraft(SQLModel, table=True):
     campaign_id: int = Field(foreign_key="campaign.campaign_id")
     contact_id: int = Field(foreign_key="client.client_id")
     version_no: int
+    day: int
     message_text: str
     is_approved: bool
     created_at: datetime
