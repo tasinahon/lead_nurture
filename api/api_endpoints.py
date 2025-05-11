@@ -474,32 +474,50 @@ def read_context_questions(client_id: int, session: Session = Depends(get_sessio
 
 
 # get mails/messages of certain day of a campaign
+
 @router.get("/campaigns/{campaign_id}/day/{day}/comms/", response_model=CombinedOut)
 def get_emails_and_messages_by_campaign_and_day(
     campaign_id: int,
     day: int,
     session: Session = Depends(get_session)
 ):
-    
-    emails = (
+  
+    final_emails = (
         session.query(Email)
         .join(EmailDraft, Email.draft_id == EmailDraft.draft_id)
         .filter(EmailDraft.campaign_id == campaign_id, EmailDraft.day == day)
+        .filter(Email.is_final == True)
         .all()
     )
 
-    
-    messages = (
+  
+    final_messages = (
         session.query(Message)
         .join(MessageDraft, Message.draft_id == MessageDraft.draft_id)
         .filter(MessageDraft.campaign_id == campaign_id, MessageDraft.day == day)
+        .filter(Message.is_final == True)
         .all()
     )
 
+    if not final_emails:
+        final_emails = (
+            session.query(EmailDraft)
+            .filter(EmailDraft.campaign_id == campaign_id, EmailDraft.day == day)
+            .all()
+        )
+
+    if not final_messages:
+        final_messages = (
+            session.query(MessageDraft)
+            .filter(MessageDraft.campaign_id == campaign_id, MessageDraft.day == day)
+            .all()
+        )
+
     return {
-        "emails": emails,
-        "messages": messages
+        "emails": final_emails or [],
+        "messages": final_messages or []
     }
+
 
 
 

@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional, List
+from typing import Union
 
 # User Models
 class UserBase(BaseModel):
@@ -405,6 +406,33 @@ class MessageOut(BaseModel):
     class Config:
         orm_mode = True
 
+
+class EmailDraftOut(BaseModel):
+    draft_id: int
+    subject: str
+    day: int
+    body_markdown: str
+
+    class Config:
+        orm_mode = True
+
+
+class MessageDraftOut(BaseModel):
+    draft_id: int
+    day: int
+    message_text: str
+
+    class Config:
+        orm_mode = True
+
 class CombinedOut(BaseModel):
-    emails: List[EmailOut]
-    messages: List[MessageOut]
+    emails: List[Union[EmailOut, EmailDraftOut]]
+    messages: List[Union[MessageOut, MessageDraftOut]]
+
+    class Config:
+        orm_mode = True
+
+
+# class CombinedOut(BaseModel):
+#     emails: List[EmailOut]
+#     messages: List[MessageOut]
