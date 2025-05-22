@@ -5,6 +5,7 @@ from agents.initial_strategy_agent import InitialStrategyAgent
 from graph.strategy_graph import strategy_graph
 from sqlmodel import Session, select
 from fastapi import APIRouter
+from db.session import SessionLocal
 from agents.scraper_agent import ScraperAgent 
 from agents.campaign_planner_agent import CampaignPlannerAgent
 from agents.draft_email_agent import EmailDraftAgent
@@ -481,35 +482,33 @@ def get_emails_and_messages_by_campaign_and_day(
     day: int,
     session: Session = Depends(get_session)
 ):
-  
     final_emails = (
-        session.query(Email)
-        .join(EmailDraft, Email.draft_id == EmailDraft.draft_id)
-        .filter(EmailDraft.campaign_id == campaign_id, EmailDraft.day == day)
-        .filter(Email.is_final == True)
+        session.query(EmailModel)
+        .join(EmailDraftModel, EmailModel.draft_id == EmailDraftModel.draft_id)
+        .filter(EmailDraftModel.campaign_id == campaign_id, EmailDraftModel.day == day)
+        .filter(EmailModel.is_final == True)
         .all()
     )
 
-  
     final_messages = (
-        session.query(Message)
-        .join(MessageDraft, Message.draft_id == MessageDraft.draft_id)
-        .filter(MessageDraft.campaign_id == campaign_id, MessageDraft.day == day)
-        .filter(Message.is_final == True)
+        session.query(MessageModel)
+        .join(MessageDraftModel, MessageModel.draft_id == MessageDraftModel.draft_id)
+        .filter(MessageDraftModel.campaign_id == campaign_id, MessageDraftModel.day == day)
+        .filter(MessageModel.is_final == True)
         .all()
     )
 
     if not final_emails:
         final_emails = (
-            session.query(EmailDraft)
-            .filter(EmailDraft.campaign_id == campaign_id, EmailDraft.day == day)
+            session.query(EmailDraftModel)
+            .filter(EmailDraftModel.campaign_id == campaign_id, EmailDraftModel.day == day)
             .all()
         )
 
     if not final_messages:
         final_messages = (
-            session.query(MessageDraft)
-            .filter(MessageDraft.campaign_id == campaign_id, MessageDraft.day == day)
+            session.query(MessageDraftModel)
+            .filter(MessageDraftModel.campaign_id == campaign_id, MessageDraftModel.day == day)
             .all()
         )
 
@@ -517,6 +516,7 @@ def get_emails_and_messages_by_campaign_and_day(
         "emails": final_emails or [],
         "messages": final_messages or []
     }
+
 
 
 
@@ -781,7 +781,7 @@ def start_campaign(
 def run_campaign_plan_and_drafts(campaign_id: int):
     CampaignPlannerAgent().invoke({"campaign_id": campaign_id})
 
-    with get_session() as s:
+    with SessionLocal() as s:
         campaign = s.get(CampaignModel, campaign_id)
 
         # Get all planned days
@@ -820,11 +820,11 @@ def run_campaign_plan_and_drafts(campaign_id: int):
 
        
         is_single_client = len(client_ids) == 1
-
+        # int(day.strip().split()[-1])
         
         for client_id in client_ids:
             for day in days:
-                day_num = int(day.strip().split()[-1])
+                day_num = day
                 if 'email' in channels:
                     EmailDraftAgent().invoke({
                         "campaign_id": campaign_id,
@@ -905,7 +905,8 @@ def full_contact_setup(
     user_id: int,
     client_id: int,
     data: FullContactSetupRequest,
-    session: Session = Depends(get_session)
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
 ):
     
     if data.context_questions:
@@ -934,9 +935,8 @@ def full_contact_setup(
     session.commit()
 
     
-    ProfileUpdateAgent().invoke({"client_id": client_id})
-    time.sleep(0.5)  
-    InitialStrategyAgent().invoke({"client_id": client_id})
+    background_tasks.add_task(ProfileUpdateAgent().invoke, {"client_id": client_id})
+    background_tasks.add_task(InitialStrategyAgent().invoke, {"client_id": client_id})
 
     return {"status": "success", "client_id": client_id}
 

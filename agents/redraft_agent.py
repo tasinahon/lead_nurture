@@ -9,6 +9,7 @@ from langchain_core.runnables import Runnable
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from db.session import get_session
+from db.session import SessionLocal
 from db.database_schema import EmailDraft, MessageDraft
 
 load_dotenv()
@@ -21,7 +22,7 @@ class RedraftAgent(Runnable):
             temperature=0.25,
             google_api_key=os.getenv("GOOGLE_API_KEY")
         )
-        self._sf = get_session
+        self._sf = SessionLocal
 
     def _next_version(self, campaign_id: int, is_email: bool) -> int:
         """Return next incremental version number inside this campaign."""

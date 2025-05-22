@@ -6,6 +6,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import BaseModel, Field
 from datetime import datetime
 from db.session import get_session
+from db.session import SessionLocal
 from db.database_schema import Profile,InitialStrategy,ContextQuestion
 import os, json
 
@@ -26,7 +27,7 @@ class InitialStrategyAgent(Runnable):
         )
         self.prompt = self._build_prompt()
         self.parser = JsonOutputParser(pydantic_schema=StrategyOutput)
-        self.session_factory = get_session
+        self.session_factory = SessionLocal
 
     def _build_prompt(self):
         return ChatPromptTemplate.from_messages([

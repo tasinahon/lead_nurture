@@ -191,7 +191,7 @@ class Campaign(SQLModel, table=True):
 class CampaignPlan(SQLModel, table=True):
     id: int = Field(default=None, primary_key=True)
     campaign_id: int = Field(foreign_key="campaign.campaign_id")
-    day: str  
+    day: int  
     title: str  
     subject: str  
     goal: str  

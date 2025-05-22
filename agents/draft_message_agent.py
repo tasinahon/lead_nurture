@@ -13,6 +13,7 @@ from langchain_core.runnables import Runnable
 from langchain_core.agents import AgentFinish
 
 from db.session import get_session
+from db.session import SessionLocal
 from db.database_schema import Communication, MessageDraft, Profile, Strategy,Campaign,CampaignPlan,User,InitialStrategy
 
 
@@ -113,7 +114,7 @@ Only return the JSON. Do not include any extra text or explanations.
 class DraftMessageAgent(Runnable):
     def __init__(self):
         self.llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.35)
-        self._sf = get_session
+        self._sf = SessionLocal
 
     def _get_comms_summary(self, client_id: int) -> str:
         with self._sf() as s:

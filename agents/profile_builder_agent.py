@@ -10,6 +10,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 
 from db.session import get_session
+from db.session import SessionLocal
 from db.database_schema import Profile, ScrapedData, ContextQuestion
 
 from pydantic import BaseModel, Field
@@ -73,7 +74,7 @@ class ProfileBuilderAgent(Runnable):
             model="models/embedding-001",
             google_api_key=os.getenv("GOOGLE_API_KEY"),
         )
-        self.session_factory = get_session
+        self.session_factory = SessionLocal
 
     def build_context(self, cid: int) -> str:
         with self.session_factory() as session:

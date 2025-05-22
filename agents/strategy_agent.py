@@ -14,6 +14,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 
 from db.session import get_session
+from db.session import SessionLocal
 from db.database_schema import Strategy, Profile, Communication
 # from graph.draft_graph import draft_phase
 
@@ -63,7 +64,7 @@ class StrategyAgent(Runnable):
             temperature=0.2,
             google_api_key=os.getenv("GOOGLE_API_KEY")
         )
-        self._sf = get_session
+        self._sf = SessionLocal
 
     def recommend_cadence(self, avg_gap_hours: float) -> str:
         if avg_gap_hours <= 72:

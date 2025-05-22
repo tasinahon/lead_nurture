@@ -1,0 +1,8 @@
+agent.txt
+onetime.py
+.gitignore
+.env.example
+README.md
+__pycache__/
+*.pyc
+venv/

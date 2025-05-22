@@ -1,7 +1,8 @@
 import os, json
-from typing import List, Dict, Any
+from typing import List, Dict, Any,Union
 from pydantic import BaseModel
 from langchain_core.runnables import Runnable
+from db.session import SessionLocal
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -32,7 +33,7 @@ Core Features:
 class CampaignPlanSchema(BaseModel):
     campaign_goal: str
     campaign_tags: List[str]
-    days: List[Dict[str, str]]
+    days: List[Dict[str, Union[int, str]]]
 
 class CampaignPlannerAgent(Runnable):
     def __init__(self):
@@ -42,7 +43,7 @@ class CampaignPlannerAgent(Runnable):
         )
         self.parser = JsonOutputParser(pydantic_schema=CampaignPlanSchema)
         self.prompt = self._build_prompt()
-        self.session_factory = get_session
+        self.session_factory = SessionLocal
 
     # def _build_prompt(self):
     #     return ChatPromptTemplate.from_messages([
@@ -102,14 +103,10 @@ class CampaignPlannerAgent(Runnable):
                 "You must:\n"
                 "1. Analyze the campaign description and tags to define a single campaign_goal\n"
                 "2. Depending on the campaign type:\n"
+                "\n"
                 "• If it's a single client:\n"
                 "- Personalize deeply using the full profile, context Q&A, and recent communication logs\n"
                 "- Adjust tone, subject, and daily goals for maximum relevance\n"
-                "- If there is **no Q&A and no prior communication**, assume this is the client’s **first-ever touchpoint**\n"
-                "  - Begin the campaign with a warm, welcoming Day 1\n"
-                "  - Introduce the brand or product clearly and gently\n"
-                "  - Avoid phrases like 'as we discussed' or anything assuming familiarity\n"
-                "  - Focus Day 1 on building trust, rapport, and setting context for future messages\n"
                 "\n"
                 "• If it's a client list:\n"
                 "- You will receive 2–3 sample profiles representing typical members of the list\n"
@@ -118,15 +115,17 @@ class CampaignPlannerAgent(Runnable):
                 "- Avoid direct personalization (no names or specific references)\n"
                 "- Keep the message flexible and broadly relevant to the audience\n"
                 "\n"
-                "Important: You are planning this campaign for the company **Fabricxai**. Their offerings should guide tone and content strategy.\n"
-                f"{FABRICXAI_FEATURES}\n"
+                "You must:\n"
+                "- Echo back the original campaign_tags\n"
+                "- Decide the number of days based on complexity (2 to 5)\n"
+                "- Make each day distinct with a title, subject line, goal, and creative idea\n"
                 "\n"
                 "Return JSON like:\n"
                 "{{\n"
                 "  \"campaign_goal\": \"...\",\n"
                 "  \"campaign_tags\": [\"...\"],\n"
                 "  \"days\": [\n"
-                "    {{\"day\": \"Day 1\", \"title\": \"...\", \"subject\": \"...\", \"goal\": \"...\", \"body_idea\": \"...\" }},\n"
+                "    {{\"day\": 1, \"title\": \"...\", \"subject\": \"...\", \"goal\": \"...\", \"body_idea\": \"...\" }},\n"
                 "    ...\n"
                 "  ]\n"
                 "}}\n"
@@ -136,6 +135,7 @@ class CampaignPlannerAgent(Runnable):
             )),
             ("user", "{context}")
         ])
+
 
 
 

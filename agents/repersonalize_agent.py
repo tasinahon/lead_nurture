@@ -7,6 +7,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.runnables import Runnable
 
 from db.session import get_session
+from db.session import SessionLocal
 from db.database_schema import Email, Message
 
 # Load environment variables
@@ -19,7 +20,7 @@ class RepersonalizeAgent(Runnable):
             temperature=0.3,
             google_api_key=os.getenv("GOOGLE_API_KEY")
         )
-        self._sf = get_session
+        self._sf = SessionLocal
 
     def _call(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
         current_draft = inputs["draft_content"]

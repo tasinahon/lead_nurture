@@ -7,6 +7,7 @@ from db.session import get_session
 from db.database_schema import Email, EmailDraft, Client
 import smtplib
 from email.mime.text import MIMEText
+from db.session import SessionLocal
 from email.message import EmailMessage
 import email.utils
 import ssl
@@ -15,7 +16,7 @@ import ssl
 
 class EmailSenderAgent:
     def __init__(self):
-        self.session_factory = get_session
+        self.session_factory = SessionLocal
         self.scheduler = BackgroundScheduler(timezone="Asia/Dhaka")
         self.scheduler.start()
 

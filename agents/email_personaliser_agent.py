@@ -9,6 +9,7 @@ from langchain_core.output_parsers import JsonOutputParser
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from db.session import get_session
+from db.session import SessionLocal
 from db.database_schema import Client, Profile, EmailDraft, MessageDraft
 
 from pydantic import BaseModel
@@ -22,7 +23,7 @@ class PersonalizedOutput(BaseModel):
 class PersonaliserAgent(Runnable):
     def __init__(self):
         self.llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.3)
-        self.session_factory = get_session
+        self.session_factory = SessionLocal
         self.parser = JsonOutputParser(pydantic_schema=PersonalizedOutput)
         self.prompt = self._build_prompt()
 

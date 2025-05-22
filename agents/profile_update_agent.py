@@ -4,6 +4,7 @@ from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
 from db.session import get_session
+from db.session import SessionLocal
 from db.database_schema import Profile, Communication, ContextQuestion
 
 from pydantic import BaseModel, Field
@@ -11,11 +12,10 @@ from typing import List, Dict, Any,Optional
 import os, json
 
 class UpdatedProfileSchema(BaseModel):
-    summary: str
-    interests: List[str]
-    engagement_times: str
-    full_text: str
-    interests: str 
+    summary: str | None = None           # allow missing
+    interests: str | None = None         # CSV string you store
+    full_text: str | None = None
+    engagement_times: str | None = None  # ← now optional
     preferred_language: Optional[str] = None
     preferred_contact: Optional[str] = None
 
@@ -31,7 +31,7 @@ class ProfileUpdateAgent(Runnable):
         )
         self.parser = JsonOutputParser(pydantic_schema=UpdatedProfileSchema)
         self.prompt = self._build_prompt()
-        self.session_factory = get_session
+        self.session_factory = SessionLocal
 
     def _build_prompt(self):
         return ChatPromptTemplate.from_messages([
@@ -106,24 +106,23 @@ class ProfileUpdateAgent(Runnable):
             raise ValueError(f"Failed to parse model output: {e} | Raw: {cleaned[:300]}")
 
         with self.session_factory() as s:
+    # delete old profile
             s.query(Profile).filter_by(client_id=client_id).delete()
+            # insert new profile
+            new_profile = Profile(
+                client_id=client_id,
+                summary=parsed.summary,
+                full_text=parsed.full_text,
+                interests=parsed.interests,
+                engagement_times=parsed.engagement_times,
+                personality_vector=json.dumps(vector),
+                preferred_language=parsed.preferred_language or "English",
+                preferred_contact=parsed.preferred_contact or "email"
+            )
+            s.add(new_profile)
             s.commit()
+            s.refresh(new_profile)
 
-    
-        new_profile = Profile(
-            client_id=client_id,
-            summary=parsed.summary,
-            full_text=parsed.full_text,
-            interests=parsed.interests,
-            engagement_times=parsed.engagement_times,
-            personality_vector=json.dumps(vector),
-            preferred_language=parsed.preferred_language or "English",
-            preferred_contact=parsed.preferred_contact or "email"
-        )
-
-        s.add(new_profile)
-        s.commit()
-        s.refresh(new_profile)
 
         return {
             "status": "profile_updated",

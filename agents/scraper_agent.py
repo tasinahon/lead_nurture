@@ -12,6 +12,7 @@ from langchain.agents.agent_types import AgentType
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from db.session import get_session
+from db.session import SessionLocal
 from db.database_schema import Client, ScrapedData
 
 load_dotenv()
@@ -49,7 +50,7 @@ def extract_linkedin_slug(linkedin_url: str) -> Optional[str]:
 
 class ScraperAgent(Runnable):
     def __init__(self):
-        self._sf = get_session
+        self._sf = SessionLocal
         self.llm = ChatGoogleGenerativeAI(
             model="gemini-1.5-flash",
             temperature=0.3,
