@@ -8,6 +8,10 @@ class UserBase(BaseModel):
     name: str
     email: str
     auth_provider: str
+    company_name: Optional[str] = None
+    company_description: Optional[str] = None
+    company_website: Optional[str] = None
+    job_title: Optional[str] = None
 
 class UserCreate(UserBase):
     pass
@@ -57,9 +61,16 @@ class ProfileBase(BaseModel):
 class ProfileCreate(ProfileBase):
     client_id: int
 
-class Profile(ProfileBase):
+class Profile(BaseModel):
     profile_id: int
     client_id: int
+    summary: str
+    interests: str
+    preferred_language: str
+    preferred_contact: str
+    engagement_times: str
+    full_text: str
+    # personality_vector excluded to avoid large embedding serialization issues
 
     class Config:
         from_attributes = True
@@ -73,14 +84,13 @@ class CampaignBase(BaseModel):
 
 class CampaignCreate(CampaignBase):
     user_id: int
-    clientlist_id: int             
-    client_ids: List[int]           
+    client_id: int  # Direct client relationship - much simpler!           
 
 
 class Campaign(CampaignBase):
     campaign_id: int
     user_id: int
-    clientlist_id: int
+    client_id: int  # Direct client relationship
     created_at: datetime
 
     class Config:

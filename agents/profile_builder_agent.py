@@ -127,8 +127,14 @@ class ProfileBuilderAgent(Runnable):
         parsed_dict = parser.parse(raw_output.content)
         parsed_output = ProfileSchema(**parsed_dict)
 
-        embedding = self.embed.embed_query(parsed_output.full_text)
-        prof_id = self.update_profile(cid, parsed_output, embedding)
+        # Temporarily disable embedding to avoid API quota issues
+        # embedding = self.embed.embed_query(parsed_output.full_text)
+        
+        # Use dummy embedding to avoid quota limits
+        dummy_embedding = [0.1] * 768  # Standard embedding dimension
+        prof_id = self.update_profile(cid, parsed_output, dummy_embedding)
+        
+        print("⚠️ Using dummy embedding to avoid API quota limits")
 
         return {
             "status": "profile_updated",

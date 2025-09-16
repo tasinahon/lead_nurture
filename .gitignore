@@ -5,3 +5,24 @@ venv/
 *.log
 .DS_Store
 
+# Environment variables (IMPORTANT - Contains sensitive data)
+.env
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+Thumbs.db
+*.DS_Store
+
+# Temporary files
+*.tmp
+*.temp
+
+# Logs
+logs/
+*.log
+

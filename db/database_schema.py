@@ -7,7 +7,33 @@ class User(SQLModel, table=True):
     name: str
     email: str
     auth_provider: str
-    created_at: datetime
+    company_name: Optional[str] = None
+    company_description: Optional[str] = None
+    company_website: Optional[str] = None
+    job_title: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class IntroductoryEmail(SQLModel, table=True):
+    intro_id: int = Field(default=None, primary_key=True)
+    client_id: int = Field(foreign_key="client.client_id")
+    user_id: int = Field(foreign_key="user.user_id")
+    client_type: str
+    timezone: str
+    preferred_language: str
+    communication_method: str
+    product_services: str
+    draft_id: Optional[int] = Field(foreign_key="emaildraft.draft_id")
+    sent_at: Optional[datetime] = None
+    replied: bool = Field(default=False)
+    reply_check_count: int = Field(default=0)  # Track how many times we've checked for replies
+    last_reply_check: Optional[datetime] = None  # When was the last reply check
+    
+    # No-reply workflow tracking
+    no_reply_workflow_triggered: bool = Field(default=False)  # Has no-reply workflow been triggered
+    no_reply_workflow_triggered_at: Optional[datetime] = None  # When was no-reply workflow triggered
+    
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class Client(SQLModel, table=True):
@@ -84,7 +110,7 @@ class Strategy(SQLModel, table=True):
 
 class EmailDraft(SQLModel, table=True):
     draft_id: int = Field(default=None, primary_key=True)
-    campaign_id: int = Field(foreign_key="campaign.campaign_id")
+    campaign_id: Optional[int] = Field(default=None, foreign_key="campaign.campaign_id")  # Optional for intro emails
     contact_id: int = Field(foreign_key="client.client_id")
     version_no: int
     subject:str
@@ -95,7 +121,7 @@ class EmailDraft(SQLModel, table=True):
 
 class MessageDraft(SQLModel, table=True):
     draft_id: int = Field(default=None, primary_key=True)
-    campaign_id: int = Field(foreign_key="campaign.campaign_id")
+    campaign_id: Optional[int] = Field(default=None, foreign_key="campaign.campaign_id")  # Optional for intro messages  
     contact_id: int = Field(foreign_key="client.client_id")
     version_no: int
     day: int
@@ -121,6 +147,8 @@ class Message(SQLModel, table=True):
     personalized_text: str
     is_final: bool
     approved_at: Optional[datetime] = None
+    scheduled_at: Optional[datetime] = None  
+    sent_at: Optional[datetime] = None
 
 
 class MessageSend(SQLModel, table=True):
@@ -175,15 +203,51 @@ class Communication(SQLModel, table=True):
     content: str
     timestamp: datetime
 
+# New tables for BRM workflow
+class EmailReply(SQLModel, table=True):
+    reply_id: int = Field(default=None, primary_key=True)
+    original_email_id: int = Field(foreign_key="email.email_id")
+    client_id: int = Field(foreign_key="client.client_id")
+    reply_subject: str
+    reply_body: str
+    received_at: datetime
+    sentiment: Optional[str] = None  # positive, neutral, negative
+    interest_level: Optional[str] = None  # high, medium, low, none
+    response_type: Optional[str] = None  # interested, needs_info, busy, not_interested
+    analysis_json: Optional[str] = None  # Full sentiment analysis JSON
+    processed: bool = False
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
 
 class Campaign(SQLModel, table=True):
     campaign_id: int = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="user.user_id")
-    clientlist_id: int = Field(foreign_key="clientlist.clientlist_id")
+    client_id: int = Field(foreign_key="client.client_id")  # Direct client relationship - much simpler!
     name: Optional[str] = None
     description: str
     tags: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    
+    # Campaign execution status
+    status: str = Field(default="draft")  # draft, approved, executing, completed, paused
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    
+    # Approval status fields
+    approval_status: str = Field(default="pending_approval")  # pending_approval, approved, rejected
+    approved_at: Optional[datetime] = None
+    user_feedback: Optional[str] = None
+    approved_days: Optional[str] = None  # JSON string of approved day numbers
+
+class CampaignClientLink(SQLModel, table=True):
+    campaign_id: int = Field(
+        foreign_key="campaign.campaign_id", primary_key=True
+    )
+    client_id: int = Field(
+        foreign_key="client.client_id", primary_key=True
+    )
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
 
 
 
@@ -198,15 +262,109 @@ class CampaignPlan(SQLModel, table=True):
     body_idea: str  
     campaign_goal: Optional[str] = None
 
+class CampaignExecution(SQLModel, table=True):
+    execution_id: int = Field(default=None, primary_key=True)
+    campaign_id: int = Field(foreign_key="campaign.campaign_id")
+    day: int
+    email_id: Optional[int] = Field(default=None, foreign_key="email.email_id")
+    generated_at: Optional[datetime] = None
+    scheduled_at: Optional[datetime] = None  # When the email should be sent
+    sent_at: Optional[datetime] = None
+    status: str = Field(default="not_generated")  # not_generated, generated, sent
+    email_subject: Optional[str] = None
+    email_content: Optional[str] = None
 
+# ============================================================================
+# LEAD SCORING AND PERFORMANCE TRACKING MODELS
+# ============================================================================
 
+class LeadScoringConfig(SQLModel, table=True):
+    """Configuration for lead scoring parameters"""
+    config_id: int = Field(default=None, primary_key=True)
+    campaign_id: int = Field(foreign_key="campaign.campaign_id")
+    email_open_points: int = Field(default=10)
+    email_click_points: int = Field(default=25)
+    email_reply_points: int = Field(default=50)
+    website_visit_points: int = Field(default=15)
+    social_engagement_points: int = Field(default=20)
+    hot_threshold: int = Field(default=100)  # Score >= 100 = Hot lead
+    warm_threshold: int = Field(default=50)  # Score >= 50 = Warm lead
+    cold_threshold: int = Field(default=0)   # Score < 50 = Cold lead
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: Optional[datetime] = None
 
-# class GeneratedMessage(SQLModel, table=True):
-#     id: Optional[int] = Field(default=None, primary_key=True)
-#     campaign_id: int = Field(foreign_key="campaign.id")
-#     contact_id: int = Field(foreign_key="contact.id")
-#     campaign_day: int
-#     message_type: str  # "email", "message", etc.
-#     generated_content: str
-#     sent: bool = False
-#     sent_at: Optional[datetime] = None
+class LeadPerformance(SQLModel, table=True):
+    """Track individual lead performance metrics with actual counts"""
+    performance_id: int = Field(default=None, primary_key=True)
+    campaign_id: int = Field(foreign_key="campaign.campaign_id")
+    client_id: int = Field(foreign_key="client.client_id")
+    day: int  # Campaign day
+    
+    # Email tracking counts
+    email_sent: bool = Field(default=False)
+    email_open_count: int = Field(default=0)  # Count how many times opened
+    email_click_count: int = Field(default=0)  # Count how many times clicked
+    email_reply_count: int = Field(default=0)  # Count replies
+    
+    # Website tracking counts  
+    website_visit_count: int = Field(default=0)  # Count website visits
+    social_engagement_count: int = Field(default=0)  # Count social interactions
+    
+    # Timestamps - track first and last occurrence
+    sent_at: Optional[datetime] = None
+    first_opened_at: Optional[datetime] = None
+    last_opened_at: Optional[datetime] = None
+    first_clicked_at: Optional[datetime] = None
+    last_clicked_at: Optional[datetime] = None
+    first_replied_at: Optional[datetime] = None
+    last_replied_at: Optional[datetime] = None
+    first_visited_at: Optional[datetime] = None
+    last_visited_at: Optional[datetime] = None
+    
+    # Derived booleans for backward compatibility
+    email_opened: bool = Field(default=False)  # True if opened at least once
+    email_clicked: bool = Field(default=False)  # True if clicked at least once
+    email_replied: bool = Field(default=False)  # True if replied at least once
+    website_visited: bool = Field(default=False)  # True if visited at least once
+    social_engaged: bool = Field(default=False)  # True if engaged at least once
+
+class ActivityLog(SQLModel, table=True):
+    """Detailed log of every single activity/interaction"""
+    activity_id: int = Field(default=None, primary_key=True)
+    campaign_id: int = Field(foreign_key="campaign.campaign_id")
+    client_id: int = Field(foreign_key="client.client_id")
+    day: int
+    activity_type: str  # opened, clicked, replied, visited, engaged
+    activity_data: Optional[str] = None  # JSON string with additional data
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = None
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    
+class LeadScore(SQLModel, table=True):
+    """Current lead scores and status"""
+    score_id: int = Field(default=None, primary_key=True)
+    campaign_id: int = Field(foreign_key="campaign.campaign_id")
+    client_id: int = Field(foreign_key="client.client_id")
+    total_score: int = Field(default=0)
+    email_score: int = Field(default=0)
+    engagement_score: int = Field(default=0)
+    lead_status: str = Field(default="cold")  # hot, warm, cold
+    last_updated: datetime = Field(default_factory=datetime.utcnow)
+    notes: Optional[str] = None
+
+class CampaignMetrics(SQLModel, table=True):
+    """Overall campaign performance metrics"""
+    metric_id: int = Field(default=None, primary_key=True)
+    campaign_id: int = Field(foreign_key="campaign.campaign_id")
+    total_leads: int = Field(default=0)
+    emails_sent: int = Field(default=0)
+    emails_opened: int = Field(default=0)
+    emails_clicked: int = Field(default=0)
+    emails_replied: int = Field(default=0)
+    hot_leads: int = Field(default=0)
+    warm_leads: int = Field(default=0)
+    cold_leads: int = Field(default=0)
+    open_rate: float = Field(default=0.0)
+    click_rate: float = Field(default=0.0)
+    reply_rate: float = Field(default=0.0)
+    last_calculated: datetime = Field(default_factory=datetime.utcnow)

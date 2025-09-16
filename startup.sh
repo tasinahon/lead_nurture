@@ -1,0 +1,3 @@
+#!/bin/bash
+pip install -r requirements.txt
+gunicorn --bind=0.0.0.0:$PORT --timeout 600 --access-logfile '-' --error-logfile '-' -k uvicorn.workers.UvicornWorker main:app

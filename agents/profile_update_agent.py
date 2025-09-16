@@ -101,7 +101,11 @@ class ProfileUpdateAgent(Runnable):
             if isinstance(parsed_dict.get("engagement_times"), list):
                 parsed_dict["engagement_times"] = ", ".join(parsed_dict["engagement_times"])
             parsed = UpdatedProfileSchema(**parsed_dict)
-            vector = self.embed.embed_query(parsed.full_text)
+            
+            # Temporarily disable embedding to avoid API quota issues
+            # vector = self.embed.embed_query(parsed.full_text)
+            vector = [0.1] * 768  # Use dummy embedding to avoid quota limits
+            print("⚠️ Using dummy embedding to avoid API quota limits")
         except Exception as e:
             raise ValueError(f"Failed to parse model output: {e} | Raw: {cleaned[:300]}")
 

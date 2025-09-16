@@ -52,6 +52,9 @@ class PersonaliserAgent(Runnable):
 
                 3. Keep the result under **150 words** and make it feel human-written.
 
+                4. CRITICAL: Never use placeholder variables in curly braces like company, name, calendar_link, google_meet_link, etc.
+                   All content must be complete and ready to send with actual values filled in.
+
                 Output strictly as JSON:
                 {
                 "subject": "...",

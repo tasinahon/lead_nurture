@@ -144,9 +144,14 @@ class EmailSenderAgent:
         msg["To"] = recipient_email
         msg["Subject"] = subject
         
-        msg.set_content("This email requires an HTML‑capable client.")
+        # Convert plain text to HTML format (newlines to <br> tags)
+        html_body = body.replace('\n', '<br>\n')
         
-        msg.add_alternative(body, subtype="html")
+        # Set plain text version
+        msg.set_content(body)
+        
+        # Add HTML version
+        msg.add_alternative(html_body, subtype="html")
 
         
         context = ssl.create_default_context()
@@ -197,7 +202,7 @@ class EmailSenderAgent:
                 print("body----------------------")
                 print(email)
                 self.send_email(client.email, draft.subject, email.personalized_body)
-                email.sent_at = datetime.now(pytz.timezone('Asia/Dhaka'))
+                email.sent_at = datetime.utcnow()
                 session.add(email)
 
             session.commit()
