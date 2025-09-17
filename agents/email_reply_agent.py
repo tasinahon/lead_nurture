@@ -65,9 +65,11 @@ class EmailReplyDetectionAgent(Runnable):
                     if email_date and sent_time:
                         # Handle timezone conversion properly
                         if sent_time.tzinfo is None:
-                            # Naive datetime - assume UTC (standard for PostgreSQL)
-                            sent_time_utc = sent_time.replace(tzinfo=pytz.UTC)
-                            print(f"🔍 [DEBUG] Naive datetime - assuming UTC")
+                            # Naive datetime from database - assume it's in Bangladesh time (Asia/Dhaka)
+                            bangladesh_tz = pytz.timezone('Asia/Dhaka')
+                            sent_time_local = bangladesh_tz.localize(sent_time)
+                            sent_time_utc = sent_time_local.astimezone(pytz.UTC)
+                            print(f"🔍 [DEBUG] Naive datetime - assuming Bangladesh time: {sent_time} -> {sent_time_utc}")
                         else:
                             # Timezone-aware datetime - convert to UTC properly
                             sent_time_utc = sent_time.astimezone(pytz.UTC)

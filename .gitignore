@@ -26,3 +26,6 @@ Thumbs.db
 logs/
 *.log
 
+# Frontend (keep separate from backend deployment)
+frontend/
+

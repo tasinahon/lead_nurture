@@ -86,15 +86,27 @@ class AutomaticReplyScheduler:
         self.scheduler.start()
         logger.info(f"✅ Scheduler started - checking every {self.config['check_interval_minutes']} minutes")
         
-        # Register shutdown handler
-        atexit.register(lambda: self.scheduler.shutdown())
+        # Register shutdown handler with error handling
+        atexit.register(self._safe_shutdown)
     
     def stop(self):
         """Stop the scheduler"""
-        if self.scheduler.running:
+        if self.scheduler and self.scheduler.running:
             logger.info("🛑 Stopping automatic reply checking scheduler...")
             self.scheduler.shutdown()
             logger.info("✅ Scheduler stopped")
+    
+    def _safe_shutdown(self):
+        """Safely shutdown the scheduler without raising errors"""
+        try:
+            if self.scheduler and self.scheduler.running:
+                logger.info("🛑 Safely shutting down scheduler via atexit...")
+                self.scheduler.shutdown(wait=False)
+                logger.info("✅ Scheduler safely shutdown")
+        except Exception as e:
+            # Suppress errors during shutdown to prevent atexit callback errors
+            logger.warning(f"⚠️ Non-critical error during scheduler shutdown: {e}")
+            pass
     
     def _check_all_introductory_emails(self):
         """

@@ -77,6 +77,7 @@ from db.database_schema import (
     CampaignClientLink as CampaignClientLinkModel,
     CampaignPlan as CampaignPlanModel,
     CampaignExecution as CampaignExecutionModel,
+    IntroductoryEmail as IntroductoryEmailModel,
     LeadScoringConfig,
     LeadPerformance,
     LeadScore,
@@ -1143,28 +1144,26 @@ def get_client_auto_campaigns(
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
     
-    # SUPER SIMPLE: Find campaigns directly for this client!
-    campaigns = session.exec(
-        select(CampaignModel)
-        .where(CampaignModel.client_id == client_id)
-    ).all()
+    # Find campaigns directly for this client
+    campaigns = session.query(CampaignModel).filter(CampaignModel.client_id == client_id).all()
     
     client_campaigns = []
     for campaign in campaigns:
         # Get campaign plan status
         plan_count = session.exec(
-            select(func.count(CampaignPlanModel.day))
+            select(CampaignPlanModel)
             .where(CampaignPlanModel.campaign_id == campaign.campaign_id)
-        ).first()
+        ).all()
+        plan_count = len(plan_count)
         
         client_campaigns.append({
             "campaign_id": campaign.campaign_id,
             "name": campaign.name,
             "description": campaign.description,
             "tags": campaign.tags,
-            "created_at": campaign.created_at,
+            "created_at": campaign.created_at.isoformat() if campaign.created_at else None,
             "has_plan": plan_count > 0,
-            "plan_days": plan_count,
+            "plan_days": plan_count or 0,
             "status": "ready_for_approval" if plan_count > 0 else "planning_needed"
         })
     
@@ -2571,145 +2570,520 @@ def update_lead_status(
         "message": f"Lead status updated from {old_status} to {new_status}"
     }
 
-@router.get("/campaigns/{campaign_id}/campaign-metrics")
-def get_campaign_metrics(
-    campaign_id: int,
-    session: Session = Depends(get_session)
-):
-    """
-    Get overall campaign performance metrics and lead distribution
-    """
-    # Count leads by status
-    lead_counts = session.exec(
-        select(
-            LeadScore.lead_status,
-            func.count(LeadScore.score_id).label("count")
-        )
-        .where(LeadScore.campaign_id == campaign_id)
-        .group_by(LeadScore.lead_status)
-    ).all()
+# @router.get("/campaigns/{campaign_id}/campaign-metrics")
+# def get_campaign_metrics(
+#     campaign_id: int,
+#     session: Session = Depends(get_session)
+# ):
+#     """
+#     Get overall campaign performance metrics and lead distribution
+#     """
+#     # Count leads by status
+#     lead_counts = session.exec(
+#         select(
+#             LeadScore.lead_status,
+#             func.count(LeadScore.score_id).label("count")
+#         )
+#         .where(LeadScore.campaign_id == campaign_id)
+#         .group_by(LeadScore.lead_status)
+#     ).all()
     
-    # Count performance metrics
-    performance_metrics = session.exec(
-        select(
-            func.count(LeadPerformance.performance_id).label("total_activities"),
-            func.sum(func.cast(LeadPerformance.email_opened, int)).label("total_opens"),
-            func.sum(func.cast(LeadPerformance.email_clicked, int)).label("total_clicks"),
-            func.sum(func.cast(LeadPerformance.email_replied, int)).label("total_replies"),
-            func.sum(func.cast(LeadPerformance.website_visited, int)).label("total_visits")
-        )
-        .where(LeadPerformance.campaign_id == campaign_id)
-    ).first()
+#     # Count performance metrics
+#     performance_metrics = session.exec(
+#         select(
+#             func.count(LeadPerformance.performance_id).label("total_activities"),
+#             func.sum(func.cast(LeadPerformance.email_opened, int)).label("total_opens"),
+#             func.sum(func.cast(LeadPerformance.email_clicked, int)).label("total_clicks"),
+#             func.sum(func.cast(LeadPerformance.email_replied, int)).label("total_replies"),
+#             func.sum(func.cast(LeadPerformance.website_visited, int)).label("total_visits")
+#         )
+#         .where(LeadPerformance.campaign_id == campaign_id)
+#     ).first()
     
-    # Organize lead counts
-    status_counts = {"hot": 0, "warm": 0, "cold": 0}
-    for status, count in lead_counts:
-        status_counts[status] = count
+#     # Organize lead counts
+#     status_counts = {"hot": 0, "warm": 0, "cold": 0}
+#     for status, count in lead_counts:
+#         status_counts[status] = count
     
-    total_leads = sum(status_counts.values())
+#     total_leads = sum(status_counts.values())
     
-    # Calculate rates
-    total_opens = performance_metrics.total_opens or 0
-    total_clicks = performance_metrics.total_clicks or 0
-    total_replies = performance_metrics.total_replies or 0
+#     # Calculate rates
+#     total_opens = performance_metrics.total_opens or 0
+#     total_clicks = performance_metrics.total_clicks or 0
+#     total_replies = performance_metrics.total_replies or 0
     
-    open_rate = (total_opens / total_leads * 100) if total_leads > 0 else 0
-    click_rate = (total_clicks / total_leads * 100) if total_leads > 0 else 0
-    reply_rate = (total_replies / total_leads * 100) if total_leads > 0 else 0
+#     open_rate = (total_opens / total_leads * 100) if total_leads > 0 else 0
+#     click_rate = (total_clicks / total_leads * 100) if total_leads > 0 else 0
+#     reply_rate = (total_replies / total_leads * 100) if total_leads > 0 else 0
     
-    return {
-        "campaign_id": campaign_id,
-        "lead_distribution": {
-            "hot_leads": status_counts["hot"],
-            "warm_leads": status_counts["warm"], 
-            "cold_leads": status_counts["cold"],
-            "total_leads": total_leads
-        },
-        "performance_metrics": {
-            "total_opens": total_opens,
-            "total_clicks": total_clicks,
-            "total_replies": total_replies,
-            "total_visits": performance_metrics.total_visits or 0,
-            "open_rate": round(open_rate, 2),
-            "click_rate": round(click_rate, 2),
-            "reply_rate": round(reply_rate, 2)
-        },
-        "message": "Campaign metrics calculated successfully"
-    }
+#     return {
+#         "campaign_id": campaign_id,
+#         "lead_distribution": {
+#             "hot_leads": status_counts["hot"],
+#             "warm_leads": status_counts["warm"], 
+#             "cold_leads": status_counts["cold"],
+#             "total_leads": total_leads
+#         },
+#         "performance_metrics": {
+#             "total_opens": total_opens,
+#             "total_clicks": total_clicks,
+#             "total_replies": total_replies,
+#             "total_visits": performance_metrics.total_visits or 0,
+#             "open_rate": round(open_rate, 2),
+#             "click_rate": round(click_rate, 2),
+#             "reply_rate": round(reply_rate, 2)
+#         },
+#         "message": "Campaign metrics calculated successfully"
+#     }
 
-@router.get("/campaigns/{campaign_id}/detailed-analytics")
-def get_detailed_campaign_analytics(
-    campaign_id: int,
-    session: Session = Depends(get_session)
-):
-    """
-    Get detailed analytics showing actual counts and activity timeline
-    """
-    # Get performance with counts
-    detailed_performance = session.exec(
-        select(
-            LeadPerformance.client_id,
-            LeadPerformance.day,
-            LeadPerformance.email_open_count,
-            LeadPerformance.email_click_count,
-            LeadPerformance.email_reply_count,
-            LeadPerformance.website_visit_count,
-            LeadPerformance.social_engagement_count,
-            ClientModel.full_name,
-            ClientModel.email
-        )
-        .join(ClientModel, LeadPerformance.client_id == ClientModel.client_id)
-        .where(LeadPerformance.campaign_id == campaign_id)
-        .order_by(LeadPerformance.client_id, LeadPerformance.day)
-    ).all()
+# @router.get("/campaigns/{campaign_id}/detailed-analytics")
+# def get_detailed_campaign_analytics(
+#     campaign_id: int,
+#     session: Session = Depends(get_session)
+# ):
+#     """
+#     Get detailed analytics showing actual counts and activity timeline
+#     """
+#     # Get performance with counts
+#     detailed_performance = session.exec(
+#         select(
+#             LeadPerformance.client_id,
+#             LeadPerformance.day,
+#             LeadPerformance.email_open_count,
+#             LeadPerformance.email_click_count,
+#             LeadPerformance.email_reply_count,
+#             LeadPerformance.website_visit_count,
+#             LeadPerformance.social_engagement_count,
+#             ClientModel.full_name,
+#             ClientModel.email
+#         )
+#         .join(ClientModel, LeadPerformance.client_id == ClientModel.client_id)
+#         .where(LeadPerformance.campaign_id == campaign_id)
+#         .order_by(LeadPerformance.client_id, LeadPerformance.day)
+#     ).all()
     
-    # Get activity timeline
-    recent_activities = session.exec(
-        select(ActivityLog, ClientModel.full_name)
-        .join(ClientModel, ActivityLog.client_id == ClientModel.client_id)
-        .where(ActivityLog.campaign_id == campaign_id)
-        .order_by(ActivityLog.timestamp.desc())
-        .limit(50)
-    ).all()
+#     # Get activity timeline
+#     recent_activities = session.exec(
+#         select(ActivityLog, ClientModel.full_name)
+#         .join(ClientModel, ActivityLog.client_id == ClientModel.client_id)
+#         .where(ActivityLog.campaign_id == campaign_id)
+#         .order_by(ActivityLog.timestamp.desc())
+#         .limit(50)
+#     ).all()
     
-    analytics = []
-    for perf in detailed_performance:
-        analytics.append({
-            "client_id": perf.client_id,
-            "client_name": perf.full_name,
-            "client_email": perf.email,
-            "day": perf.day,
-            "email_opens": perf.email_open_count,
-            "email_clicks": perf.email_click_count,
-            "email_replies": perf.email_reply_count,
-            "website_visits": perf.website_visit_count,
-            "social_engagements": perf.social_engagement_count,
-            "total_activities": (
-                perf.email_open_count + perf.email_click_count + 
-                perf.email_reply_count + perf.website_visit_count + 
-                perf.social_engagement_count
-            )
-        })
+#     analytics = []
+#     for perf in detailed_performance:
+#         analytics.append({
+#             "client_id": perf.client_id,
+#             "client_name": perf.full_name,
+#             "client_email": perf.email,
+#             "day": perf.day,
+#             "email_opens": perf.email_open_count,
+#             "email_clicks": perf.email_click_count,
+#             "email_replies": perf.email_reply_count,
+#             "website_visits": perf.website_visit_count,
+#             "social_engagements": perf.social_engagement_count,
+#             "total_activities": (
+#                 perf.email_open_count + perf.email_click_count + 
+#                 perf.email_reply_count + perf.website_visit_count + 
+#                 perf.social_engagement_count
+#             )
+#         })
     
-    activity_timeline = []
-    for activity, client_name in recent_activities:
-        activity_timeline.append({
-            "client_name": client_name,
-            "activity_type": activity.activity_type,
-            "day": activity.day,
-            "timestamp": activity.timestamp.isoformat(),
-            "ip_address": activity.ip_address
-        })
+#     activity_timeline = []
+#     for activity, client_name in recent_activities:
+#         activity_timeline.append({
+#             "client_name": client_name,
+#             "activity_type": activity.activity_type,
+#             "day": activity.day,
+#             "timestamp": activity.timestamp.isoformat(),
+#             "ip_address": activity.ip_address
+#         })
     
-    return {
-        "campaign_id": campaign_id,
-        "detailed_performance": analytics,
-        "recent_activity_timeline": activity_timeline,
-        "summary": {
-            "total_email_opens": sum(p.email_open_count for p in detailed_performance),
-            "total_email_clicks": sum(p.email_click_count for p in detailed_performance),
-            "total_website_visits": sum(p.website_visit_count for p in detailed_performance),
-            "most_active_client": max(analytics, key=lambda x: x["total_activities"])["client_name"] if analytics else None
-        },
-        "message": "Detailed analytics retrieved with actual activity counts"
-    }
+#     return {
+#         "campaign_id": campaign_id,
+#         "detailed_performance": analytics,
+#         "recent_activity_timeline": activity_timeline,
+#         "summary": {
+#             "total_email_opens": sum(p.email_open_count for p in detailed_performance),
+#             "total_email_clicks": sum(p.email_click_count for p in detailed_performance),
+#             "total_website_visits": sum(p.website_visit_count for p in detailed_performance),
+#             "most_active_client": max(analytics, key=lambda x: x["total_activities"])["client_name"] if analytics else None
+#         },
+#         "message": "Detailed analytics retrieved with actual activity counts"
+#     }
+
+
+# ============================================================================
+# STREAMLIT FRONTEND APIS
+# ============================================================================
+
+@router.get("/introductory-emails/", response_model=List[Dict[str, Any]])
+def get_all_introductory_emails(user_id: Optional[int] = None, session: Session = Depends(get_session)):
+    """Get all introductory emails for Streamlit dashboard, optionally filtered by user_id"""
+    try:
+        # Query introductory emails with optional user filter
+        query = session.query(IntroductoryEmailModel)
+        if user_id:
+            query = query.filter(IntroductoryEmailModel.user_id == user_id)
+        intro_emails = query.all()
+        
+        result = []
+        for intro in intro_emails:
+            # Get client info
+            client = session.get(ClientModel, intro.client_id)
+            
+            # Get email draft info if available
+            draft = None
+            if intro.draft_id:
+                draft = session.get(EmailDraftModel, intro.draft_id)
+            
+            result.append({
+                "intro_id": intro.intro_id,
+                "client_id": intro.client_id,
+                "client_name": client.full_name if client else "Unknown",
+                "client_email": client.email if client else "Unknown",
+                "client_company": client.company if client else "Unknown",
+                "subject": draft.subject if draft else "No Subject",
+                "sent_at": intro.sent_at.isoformat() if intro.sent_at else None,
+                "replied": intro.replied,
+                "reply_check_count": intro.reply_check_count,
+                "last_reply_check": intro.last_reply_check.isoformat() if intro.last_reply_check else None,
+                "no_reply_workflow_triggered": intro.no_reply_workflow_triggered,
+                "no_reply_workflow_triggered_at": intro.no_reply_workflow_triggered_at.isoformat() if intro.no_reply_workflow_triggered_at else None,
+                "timezone": intro.timezone,
+                "preferred_language": intro.preferred_language,
+                "communication_method": intro.communication_method,
+                "created_at": intro.created_at.isoformat() if intro.created_at else None
+            })
+        
+        return result
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching introductory emails: {str(e)}")
+
+
+@router.get("/clients/{client_id}/introductory-email/", response_model=Dict[str, Any])
+def get_client_introductory_email(client_id: int, session: Session = Depends(get_session)):
+    """Get introductory email information for a specific client"""
+    try:
+        # Find introductory email by client_id
+        intro = session.query(IntroductoryEmailModel).filter(
+            IntroductoryEmailModel.client_id == client_id
+        ).first()
+        
+        if not intro:
+            raise HTTPException(status_code=404, detail="No introductory email found for this client")
+        
+        # Get related data - simplified version
+        client = session.get(ClientModel, client_id)
+        user = session.get(UserModel, intro.user_id) if intro and intro.user_id else None
+        draft = session.get(EmailDraftModel, intro.draft_id) if intro and intro.draft_id else None
+        
+        # Simple return without follow-ups for now
+        return {
+            "intro_email": {
+                "intro_id": intro.intro_id,
+                "sent_at": intro.sent_at.isoformat() if intro.sent_at else None,
+                "replied": intro.replied,
+                "reply_check_count": intro.reply_check_count,
+                "last_reply_check": intro.last_reply_check.isoformat() if intro.last_reply_check else None,
+                "no_reply_workflow_triggered": intro.no_reply_workflow_triggered,
+                "no_reply_workflow_triggered_at": intro.no_reply_workflow_triggered_at.isoformat() if intro.no_reply_workflow_triggered_at else None,
+                "timezone": intro.timezone,
+                "preferred_language": intro.preferred_language,
+                "communication_method": intro.communication_method
+            },
+            "client": {
+                "client_id": client.client_id if client else None,
+                "full_name": client.full_name if client else "Unknown",
+                "email": client.email if client else "Unknown",
+                "company": client.company if client else "Unknown",
+                "phone": client.phone if client else None,
+                "linkedin_url": client.linkedin_url if client else None
+            },
+            "user": {
+                "user_id": user.user_id if user else None,
+                "name": user.name if user else "Unknown", 
+                "email": user.email if user else "Unknown"
+            },
+            "email_draft": {
+                "draft_id": draft.draft_id if draft else None,
+                "subject": draft.subject if draft else "No Subject",
+                "body_markdown": draft.body_markdown if draft else "No Content"
+            },
+            "follow_up_campaigns": []
+        }
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error fetching intro email details: {str(e)}")
+
+
+@router.get("/campaign-executions/", response_model=List[Dict[str, Any]])
+def get_all_campaign_executions(client_id: Optional[int] = None, user_id: Optional[int] = None, session: Session = Depends(get_session)):
+    """Get all campaign executions (follow-up emails) for Streamlit dashboard, optionally filtered by client_id or user_id"""
+    try:
+        # Debug: Check total count in table
+        total_count = session.query(CampaignExecutionModel).count()
+        print(f"DEBUG: Total CampaignExecution records: {total_count}")
+        
+        # Start with base query - JOIN with Campaign to get client_id access
+        query = session.query(CampaignExecutionModel).join(CampaignModel)
+        
+        # Apply filters
+        if client_id:
+            query = query.filter(CampaignModel.client_id == client_id)
+            print(f"DEBUG: Filtering by client_id: {client_id}")
+        
+        if user_id:
+            query = query.filter(CampaignModel.user_id == user_id)
+            print(f"DEBUG: Filtering by user_id: {user_id}")
+            
+        executions = query.all()
+        print(f"DEBUG: Found {len(executions)} campaign executions after filtering")
+        
+        result = []
+        for execution in executions:
+            try:
+                # Get campaign and client data through the relationship
+                campaign = session.get(CampaignModel, execution.campaign_id) if execution.campaign_id else None
+                client = session.get(ClientModel, campaign.client_id) if campaign else None
+                
+                result.append({
+                    "execution_id": execution.execution_id,
+                    "campaign_id": execution.campaign_id,
+                    "client_id": campaign.client_id if campaign else None,
+                    "client_name": client.full_name if client else "Unknown",
+                    "client_email": client.email if client else "Unknown", 
+                    "client_company": client.company if client else "Unknown",
+                    "campaign_name": campaign.name if campaign else f"Campaign {execution.campaign_id}",
+                    "subject": execution.email_subject or "No Subject",
+                    "personalized_content": execution.email_content[:200] + "..." if execution.email_content and len(execution.email_content) > 200 else execution.email_content,
+                    "scheduled_at": execution.scheduled_at.isoformat() if execution.scheduled_at else None,
+                    "sent_at": execution.sent_at.isoformat() if execution.sent_at else None,
+                    "status": execution.status or "Unknown",
+                    "created_at": execution.generated_at.isoformat() if execution.generated_at else None,
+                    "day": execution.day
+                })
+            except Exception as row_error:
+                # Skip problematic rows but continue processing
+                print(f"Error processing execution {execution.execution_id}: {str(row_error)}")
+                continue
+        
+        return result
+        
+    except Exception as e:
+        import traceback
+        error_details = {
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "user_id": user_id,
+            "client_id": client_id
+        }
+        raise HTTPException(status_code=500, detail=f"Error fetching campaign executions: {str(e)} - Details: {error_details}")
+
+
+# @router.get("/clients/{client_id}/campaign-executions/", response_model=List[Dict[str, Any]])
+# def get_client_campaign_executions(client_id: int, session: Session = Depends(get_session)):
+#     """Get all follow-up campaign executions for a specific client"""
+#     try:
+#         # Verify client exists
+#         client = session.get(ClientModel, client_id)
+#         if not client:
+#             raise HTTPException(status_code=404, detail="Client not found")
+        
+#         # Get all campaign executions for this client through Campaign relationship
+#         executions = session.query(CampaignExecutionModel).join(CampaignModel).filter(
+#             CampaignModel.client_id == client_id
+#         ).order_by(CampaignExecutionModel.scheduled_at).all()
+        
+#         result = []
+#         for execution in executions:
+#             campaign = session.get(CampaignModel, execution.campaign_id) if execution.campaign_id else None
+            
+#             result.append({
+#                 "execution_id": execution.execution_id,
+#                 "campaign_id": execution.campaign_id,
+#                 "campaign_name": campaign.name if campaign else f"Campaign {execution.campaign_id}",
+#                 "subject": execution.email_subject or "No Subject",
+#                 "personalized_content": execution.email_content,
+#                 "scheduled_at": execution.scheduled_at.isoformat() if execution.scheduled_at else None,
+#                 "sent_at": execution.sent_at.isoformat() if execution.sent_at else None,
+#                 "status": execution.status,
+#                 "created_at": execution.generated_at.isoformat() if execution.generated_at else None,
+#                 "day": execution.day
+#             })
+        
+#         return result
+        
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Error fetching client campaign executions: {str(e)}")
+
+
+# @router.get("/debug/database-counts/")
+# def debug_database_counts(session: Session = Depends(get_session)):
+#     """Debug endpoint to check record counts in all relevant tables"""
+#     try:
+#         counts = {
+#             "users": session.query(UserModel).count(),
+#             "clients": session.query(ClientModel).count(),
+#             "introductory_emails": session.query(IntroductoryEmailModel).count(),
+#             "campaign_executions": session.query(CampaignExecutionModel).count(),
+#             "campaigns": session.query(CampaignModel).count(),
+#             "email_drafts": session.query(EmailDraftModel).count()
+#         }
+        
+#         # Get some sample data
+#         sample_campaign_executions = session.query(CampaignExecutionModel).limit(3).all()
+#         sample_intro_emails = session.query(IntroductoryEmailModel).limit(3).all()
+        
+#         return {
+#             "counts": counts,
+#             "sample_campaign_executions": [
+#                 {
+#                     "execution_id": ce.execution_id,
+#                     "client_id": ce.client_id,
+#                     "campaign_id": ce.campaign_id,
+#                     "subject": ce.subject,
+#                     "status": ce.status
+#                 } for ce in sample_campaign_executions
+#             ],
+#             "sample_intro_emails": [
+#                 {
+#                     "intro_id": ie.intro_id,
+#                     "client_id": ie.client_id,
+#                     "user_id": ie.user_id,
+#                     "replied": ie.replied,
+#                     "no_reply_workflow_triggered": ie.no_reply_workflow_triggered
+#                 } for ie in sample_intro_emails
+#             ]
+#         }
+#     except Exception as e:
+#         return {"error": str(e)}
+
+
+# @router.get("/analytics/dashboard/", response_model=Dict[str, Any])
+# def get_dashboard_analytics(session: Session = Depends(get_session)):
+#     """Get overview analytics for Streamlit dashboard"""
+#     try:
+#         # Get counts
+#         total_intro_emails = session.query(IntroductoryEmailModel).count()
+#         total_replies = session.query(IntroductoryEmailModel).filter(IntroductoryEmailModel.replied == True).count()
+#         total_no_reply_workflows = session.query(IntroductoryEmailModel).filter(IntroductoryEmailModel.no_reply_workflow_triggered == True).count()
+#         total_follow_ups = session.query(CampaignExecutionModel).count()
+#         total_clients = session.query(ClientModel).count()
+#         total_campaigns = session.query(CampaignModel).count()
+        
+#         # Calculate rates
+#         reply_rate = (total_replies / total_intro_emails * 100) if total_intro_emails > 0 else 0
+#         no_reply_rate = (total_no_reply_workflows / total_intro_emails * 100) if total_intro_emails > 0 else 0
+        
+#         # Get recent activity
+#         recent_intro_emails = session.query(IntroductoryEmailModel).order_by(
+#             IntroductoryEmailModel.sent_at.desc()
+#         ).limit(5).all()
+        
+#         recent_executions = session.query(CampaignExecutionModel).order_by(
+#             CampaignExecutionModel.created_at.desc()
+#         ).limit(5).all()
+        
+#         return {
+#             "overview": {
+#                 "total_intro_emails": total_intro_emails,
+#                 "total_replies": total_replies,
+#                 "total_no_reply_workflows": total_no_reply_workflows,
+#                 "total_follow_ups": total_follow_ups,
+#                 "total_clients": total_clients,
+#                 "total_campaigns": total_campaigns,
+#                 "reply_rate_percentage": round(reply_rate, 2),
+#                 "no_reply_rate_percentage": round(no_reply_rate, 2)
+#             },
+#             "recent_activity": {
+#                 "recent_intro_emails": len(recent_intro_emails),
+#                 "recent_follow_ups": len(recent_executions)
+#             }
+#         }
+        
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Error fetching dashboard analytics: {str(e)}")
+
+
+# @router.get("/clients/{client_id}/activity-timeline/", response_model=Dict[str, Any])
+# def get_client_activity_timeline(client_id: int, session: Session = Depends(get_session)):
+#     """Get complete activity timeline for a specific client"""
+#     try:
+#         client = session.get(ClientModel, client_id)
+#         if not client:
+#             raise HTTPException(status_code=404, detail="Client not found")
+        
+#         timeline = []
+        
+#         # Get introductory email
+#         intro = session.query(IntroductoryEmailModel).filter(
+#             IntroductoryEmailModel.client_id == client_id
+#         ).first()
+        
+#         if intro:
+#             timeline.append({
+#                 "timestamp": intro.sent_at.isoformat() if intro.sent_at else intro.created_at.isoformat(),
+#                 "type": "introductory_email",
+#                 "title": "Introductory Email Sent",
+#                 "description": f"Initial outreach email sent to {client.full_name}",
+#                 "status": "replied" if intro.replied else "no_reply",
+#                 "details": {
+#                     "reply_checks": intro.reply_check_count,
+#                     "last_check": intro.last_reply_check.isoformat() if intro.last_reply_check else None
+#                 }
+#             })
+            
+#             if intro.no_reply_workflow_triggered:
+#                 timeline.append({
+#                     "timestamp": intro.no_reply_workflow_triggered_at.isoformat(),
+#                     "type": "no_reply_workflow",
+#                     "title": "No-Reply Workflow Triggered",
+#                     "description": "Follow-up campaign sequence initiated",
+#                     "status": "active"
+#                 })
+        
+#         # Get follow-up campaigns
+#         follow_ups = session.query(CampaignExecutionModel).filter(
+#             CampaignExecutionModel.client_id == client_id
+#         ).order_by(CampaignExecutionModel.scheduled_at).all()
+        
+#         for follow_up in follow_ups:
+#             timeline.append({
+#                 "timestamp": (follow_up.sent_at or follow_up.scheduled_at or follow_up.created_at).isoformat(),
+#                 "type": "follow_up_email",
+#                 "title": f"Follow-up Email: {follow_up.subject}",
+#                 "description": follow_up.personalized_content[:100] + "..." if follow_up.personalized_content and len(follow_up.personalized_content) > 100 else follow_up.personalized_content,
+#                 "status": follow_up.status,
+#                 "details": {
+#                     "execution_id": follow_up.execution_id,
+#                     "scheduled_at": follow_up.scheduled_at.isoformat() if follow_up.scheduled_at else None,
+#                     "sent_at": follow_up.sent_at.isoformat() if follow_up.sent_at else None
+#                 }
+#             })
+        
+#         # Sort timeline by timestamp
+#         timeline.sort(key=lambda x: x["timestamp"])
+        
+#         return {
+#             "client": {
+#                 "client_id": client.client_id,
+#                 "full_name": client.full_name,
+#                 "email": client.email,
+#                 "company": client.company
+#             },
+#             "timeline": timeline,
+#             "summary": {
+#                 "total_activities": len(timeline),
+#                 "intro_email_sent": intro is not None,
+#                 "replied_to_intro": intro.replied if intro else False,
+#                 "follow_ups_sent": len(follow_ups)
+#             }
+#         }
+        
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Error fetching client timeline: {str(e)}")
