@@ -64,6 +64,18 @@ class SimpleLinkedInScraper:
                 if file in ["chromedriver.exe", "chromedriver"]:
                     return os.path.abspath(os.path.join(root, file))
         
+        # Try using webdriver-manager as fallback for cloud deployment
+        try:
+            from webdriver_manager.chrome import ChromeDriverManager
+            from selenium.webdriver.chrome.service import Service
+            print("🔧 Using webdriver-manager to install ChromeDriver...")
+            driver_path = ChromeDriverManager().install()
+            if driver_path and os.path.exists(driver_path):
+                print(f"✅ ChromeDriver installed via webdriver-manager at: {driver_path}")
+                return driver_path
+        except Exception as e:
+            print(f"⚠️ webdriver-manager failed: {str(e)}")
+        
         return None
         
     def setup_driver(self):
