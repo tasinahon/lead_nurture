@@ -153,6 +153,11 @@ async def health_check():
         ]
     }
 
+@app.get("/api/test", tags=["Debug"])
+async def test_endpoint():
+    """Test endpoint to verify API is working"""
+    return {"message": "Test endpoint working", "timestamp": datetime.utcnow().isoformat()}
+
 @app.get("/api/status", response_model=Dict[str, Any], tags=["Status"])
 async def get_status():
     """
@@ -189,6 +194,17 @@ async def get_status():
             "scraper_import_error": import_error,
             "chromedriver_check": "Will test during scraping"
         }
+    }
+
+@app.post("/api/scrape-simple", tags=["Debug"])
+async def scrape_profile_simple(request: ScrapeRequest):
+    """Simple scrape endpoint for testing"""
+    return {
+        "status": "debug",
+        "message": "Simple scrape endpoint reached",
+        "profile_url": request.profile_url,
+        "scraper_available": SCRAPER_AVAILABLE,
+        "scraper_error": SCRAPER_ERROR
     }
 
 @app.post("/api/scrape", response_model=ScrapeResponse, tags=["Scraping"])
