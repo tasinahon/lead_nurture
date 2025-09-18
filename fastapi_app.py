@@ -159,9 +159,23 @@ async def get_status():
     if scraper_instance:
         status_data.logged_in = scraper_instance.is_logged_in
     
+    # Add debug info about imports
+    try:
+        from simple_linkedin_scraper import SimpleLinkedInScraper
+        import_status = "success"
+        import_error = None
+    except Exception as e:
+        import_status = "failed"
+        import_error = str(e)
+    
     return {
         "status": "success",
-        "data": status_data.dict()
+        "data": status_data.dict(),
+        "debug": {
+            "scraper_import_status": import_status,
+            "scraper_import_error": import_error,
+            "chromedriver_check": "Will test during scraping"
+        }
     }
 
 @app.post("/api/scrape", response_model=ScrapeResponse, tags=["Scraping"])
