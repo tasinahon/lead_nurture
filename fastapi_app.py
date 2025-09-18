@@ -16,7 +16,20 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
-from simple_linkedin_scraper import SimpleLinkedInScraper
+# Try to import the scraper with error handling
+try:
+    from simple_linkedin_scraper import SimpleLinkedInScraper
+    SCRAPER_AVAILABLE = True
+    SCRAPER_ERROR = None
+    print("✅ SimpleLinkedInScraper imported successfully")
+except Exception as e:
+    SCRAPER_AVAILABLE = False
+    SCRAPER_ERROR = str(e)
+    print(f"❌ Failed to import SimpleLinkedInScraper: {e}")
+    # Create a dummy class to prevent errors
+    class SimpleLinkedInScraper:
+        def __init__(self):
+            raise Exception("Scraper not available due to import error")
 
 # FastAPI app instance
 app = FastAPI(
@@ -189,6 +202,17 @@ async def scrape_profile(request: ScrapeRequest, background_tasks: BackgroundTas
     Returns the scraped profile data including basic info, experience, education, and skills.
     """
     try:
+        # Check if scraper is available
+        if not SCRAPER_AVAILABLE:
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "status": "error",
+                    "message": f"Scraper not available: {SCRAPER_ERROR}",
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            )
+        
         # Get scraper instance
         scraper = get_scraper()
         
