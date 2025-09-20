@@ -49,6 +49,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Print debug info at startup
+print(f"🚀 FastAPI app initialized")
+print(f"📊 Scraper available: {SCRAPER_AVAILABLE}")
+if SCRAPER_ERROR:
+    print(f"❌ Scraper error: {SCRAPER_ERROR}")
+
+# Add startup event to log routes
+@app.on_event("startup")
+async def startup_event():
+    print("🔗 Registered routes:")
+    for route in app.routes:
+        if hasattr(route, 'methods') and hasattr(route, 'path'):
+            print(f"  {list(route.methods)} {route.path}")
+    print("✅ App startup complete")
+
 # Global scraper instance
 scraper_instance = None
 scraper_lock = threading.Lock()
@@ -194,6 +209,28 @@ async def get_status():
             "scraper_import_error": import_error,
             "chromedriver_check": "Will test during scraping"
         }
+    }
+
+@app.get("/api/debug", tags=["Debug"])
+async def debug_endpoint():
+    """Debug endpoint to test if endpoints are registered"""
+    return {
+        "status": "success",
+        "message": "Debug endpoint is working",
+        "scraper_available": SCRAPER_AVAILABLE,
+        "scraper_error": SCRAPER_ERROR,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+@app.post("/api/scrape-test", tags=["Debug"])
+async def scrape_test_endpoint(request: ScrapeRequest):
+    """Test scrape endpoint without dependencies"""
+    return {
+        "status": "success",
+        "message": "Test scrape endpoint reached successfully",
+        "profile_url": request.profile_url,
+        "save_to_file": request.save_to_file,
+        "note": "This is a test endpoint without scraper dependencies"
     }
 
 @app.post("/api/scrape-simple", tags=["Debug"])
