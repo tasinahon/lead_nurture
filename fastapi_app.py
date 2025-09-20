@@ -222,6 +222,30 @@ async def debug_endpoint():
         "timestamp": datetime.utcnow().isoformat()
     }
 
+@app.post("/api/scrape-info", tags=["Debug"])
+async def scrape_info(request: ScrapeRequest):
+    """
+    Get information about why scraping isn't working
+    """
+    return {
+        "status": "info",
+        "message": "ChromeDriver/Chrome installation issue on Azure App Service",
+        "details": {
+            "scraper_available": SCRAPER_AVAILABLE,
+            "scraper_error": SCRAPER_ERROR,
+            "chrome_status": "Not installed - Azure App Service doesn't include Chrome by default",
+            "chromedriver_status": "Can download but requires Chrome to run",
+            "solution": "Need Chrome browser installed first, then ChromeDriver can work"
+        },
+        "profile_url": request.profile_url,
+        "alternatives": [
+            "Use Docker container with Chrome pre-installed",
+            "Use Azure Container Instances", 
+            "Switch to a VPS with Chrome support"
+        ],
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
 @app.post("/api/scrape-test", tags=["Debug"])
 async def scrape_test_endpoint(request: ScrapeRequest):
     """Test scrape endpoint without dependencies"""
@@ -267,11 +291,33 @@ async def scrape_profile(request: ScrapeRequest, background_tasks: BackgroundTas
             )
         
         # Get scraper instance
-        scraper = get_scraper()
+        try:
+            scraper = get_scraper()
+        except Exception as e:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "status": "error",
+                    "message": f"Failed to initialize scraper: {str(e)}",
+                    "profile_url": request.profile_url,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            )
         
         # Scrape the profile
         start_time = time.time()
-        profile_data = scraper.scrape_profile(request.profile_url)
+        try:
+            profile_data = scraper.scrape_profile(request.profile_url)
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "status": "error",
+                    "message": f"Scraping failed: {str(e)}",
+                    "profile_url": request.profile_url,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            )
         scraping_time = round(time.time() - start_time, 2)
         
         if not profile_data:
