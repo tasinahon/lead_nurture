@@ -222,20 +222,59 @@ async def debug_endpoint():
         "timestamp": datetime.utcnow().isoformat()
     }
 
+def check_chrome_installation():
+    """Check if Chrome browser is actually installed"""
+    import subprocess
+    import shutil
+    
+    try:
+        # Check if google-chrome is in PATH
+        if shutil.which('google-chrome'):
+            return "Installed via PATH", "google-chrome"
+        
+        # Check common Chrome installation paths
+        chrome_paths = [
+            '/usr/bin/google-chrome',
+            '/usr/bin/google-chrome-stable', 
+            '/opt/google/chrome/chrome',
+            '/usr/bin/chromium-browser'
+        ]
+        
+        for path in chrome_paths:
+            if os.path.exists(path):
+                return f"Installed at {path}", path
+                
+        # Try running chrome --version
+        try:
+            result = subprocess.run(['google-chrome', '--version'], 
+                                  capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                return f"Installed - Version: {result.stdout.strip()}", "google-chrome"
+        except:
+            pass
+            
+        return "Not found", None
+        
+    except Exception as e:
+        return f"Error checking: {str(e)}", None
+
 @app.post("/api/scrape-info", tags=["Debug"])
 async def scrape_info(request: ScrapeRequest):
     """
     Get information about why scraping isn't working
     """
+    chrome_status, chrome_path = check_chrome_installation()
+    
     return {
         "status": "info",
-        "message": "ChromeDriver/Chrome installation issue on Azure App Service",
+        "message": "ChromeDriver/Chrome installation status",
         "details": {
             "scraper_available": SCRAPER_AVAILABLE,
             "scraper_error": SCRAPER_ERROR,
-            "chrome_status": "Not installed - Azure App Service doesn't include Chrome by default",
-            "chromedriver_status": "Can download but requires Chrome to run",
-            "solution": "Need Chrome browser installed first, then ChromeDriver can work"
+            "chrome_status": chrome_status,
+            "chrome_path": chrome_path,
+            "chromedriver_status": "Can download via webdriver-manager",
+            "solution": "Chrome browser required for ChromeDriver to function"
         },
         "profile_url": request.profile_url,
         "alternatives": [
@@ -268,7 +307,7 @@ async def scrape_profile_simple(request: ScrapeRequest):
         "scraper_error": SCRAPER_ERROR
     }
 
-@app.post("/api/scrape", response_model=ScrapeResponse, tags=["Scraping"])
+@app.post("/api/scrape", tags=["Scraping"])
 async def scrape_profile(request: ScrapeRequest, background_tasks: BackgroundTasks):
     """
     Scrape a LinkedIn profile
@@ -377,7 +416,7 @@ async def scrape_profile(request: ScrapeRequest, background_tasks: BackgroundTas
             }
         )
 
-@app.post("/api/scrape/batch", response_model=BatchScrapeResponse, tags=["Scraping"])
+@app.post("/api/scrape/batch", tags=["Scraping"])
 async def scrape_multiple_profiles(request: BatchScrapeRequest, background_tasks: BackgroundTasks):
     """
     Scrape multiple LinkedIn profiles
