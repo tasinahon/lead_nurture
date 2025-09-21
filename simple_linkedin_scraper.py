@@ -40,28 +40,40 @@ class SimpleLinkedInScraper:
         
     def find_chromedriver(self):
         """Find ChromeDriver in current directory or system paths"""
+        import platform
+        
         # Check for Azure/Linux system chromedriver first
         if os.path.exists('/usr/local/bin/chromedriver'):
             return '/usr/local/bin/chromedriver'
         
-        # Check for local chromedriver (Windows and Linux)
-        possible_paths = [
-            "chromedriver.exe",
-            "./chromedriver.exe", 
-            "chromedriver",  # Linux version
-            "./chromedriver",  # Linux version
-            "chromedriver-win32/chromedriver.exe",
-            "./chromedriver-win32/chromedriver.exe"
-        ]
+        # Platform-specific paths
+        is_windows = platform.system() == 'Windows'
+        
+        if is_windows:
+            possible_paths = [
+                "chromedriver.exe",
+                "./chromedriver.exe", 
+                "chromedriver-win32/chromedriver.exe",
+                "./chromedriver-win32/chromedriver.exe"
+            ]
+        else:
+            # Linux/Unix paths only
+            possible_paths = [
+                "chromedriver",
+                "./chromedriver",
+                "/usr/bin/chromedriver",
+                "/usr/local/bin/chromedriver"
+            ]
         
         for path in possible_paths:
             if os.path.exists(path):
                 return os.path.abspath(path)
         
-        # Search in current directory and subdirectories
+        # Search in current directory and subdirectories (platform-specific)
+        target_files = ["chromedriver.exe"] if is_windows else ["chromedriver"]
         for root, dirs, files in os.walk("."):
             for file in files:
-                if file in ["chromedriver.exe", "chromedriver"]:
+                if file in target_files:
                     return os.path.abspath(os.path.join(root, file))
         
         # Try using webdriver-manager as fallback for cloud deployment
