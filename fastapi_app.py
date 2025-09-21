@@ -308,7 +308,7 @@ async def scrape_profile_simple(request: ScrapeRequest):
     }
 
 @app.post("/api/scrape", tags=["Scraping"])
-async def scrape_profile(request: ScrapeRequest, background_tasks: BackgroundTasks):
+async def scrape_profile(request: ScrapeRequest):
     """
     Scrape a LinkedIn profile
     
@@ -320,87 +320,56 @@ async def scrape_profile(request: ScrapeRequest, background_tasks: BackgroundTas
     try:
         # Check if scraper is available
         if not SCRAPER_AVAILABLE:
-            raise HTTPException(
-                status_code=500,
-                detail={
-                    "status": "error",
-                    "message": f"Scraper not available: {SCRAPER_ERROR}",
-                    "timestamp": datetime.utcnow().isoformat()
-                }
-            )
+            return {
+                "status": "error",
+                "message": f"Scraper not available: {SCRAPER_ERROR}",
+                "timestamp": datetime.utcnow().isoformat()
+            }
         
         # Get scraper instance
         try:
             scraper = get_scraper()
         except Exception as e:
-            raise HTTPException(
-                status_code=503,
-                detail={
-                    "status": "error",
-                    "message": f"Failed to initialize scraper: {str(e)}",
-                    "profile_url": request.profile_url,
-                    "timestamp": datetime.utcnow().isoformat()
-                }
-            )
+            return {
+                "status": "error",
+                "message": f"Failed to initialize scraper: {str(e)}",
+                "profile_url": request.profile_url,
+                "timestamp": datetime.utcnow().isoformat()
+            }
         
         # Scrape the profile
         start_time = time.time()
         try:
             profile_data = scraper.scrape_profile(request.profile_url)
         except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail={
-                    "status": "error",
-                    "message": f"Scraping failed: {str(e)}",
-                    "profile_url": request.profile_url,
-                    "timestamp": datetime.utcnow().isoformat()
-                }
-            )
+            return {
+                "status": "error",
+                "message": f"Scraping failed: {str(e)}",
+                "profile_url": request.profile_url,
+                "timestamp": datetime.utcnow().isoformat()
+            }
         scraping_time = round(time.time() - start_time, 2)
         
         if not profile_data:
-            raise HTTPException(
-                status_code=404,
-                detail={
-                    "status": "error",
-                    "message": "Failed to scrape profile. Please check the URL and try again.",
-                    "profile_url": request.profile_url,
-                    "scraping_time_seconds": scraping_time
-                }
-            )
+            return {
+                "status": "error",
+                "message": "Failed to scrape profile. Please check the URL and try again.",
+                "profile_url": request.profile_url,
+                "scraping_time_seconds": scraping_time
+            }
         
-        # Create response
-        response = ScrapeResponse(
-            status="success",
-            message="Profile scraped successfully",
-            data=ProfileData(**profile_data),
-            metadata={
+        # Create simple response
+        response = {
+            "status": "success",
+            "message": "Profile scraped successfully",
+            "data": profile_data,
+            "metadata": {
                 "profile_url": request.profile_url,
                 "scraping_time_seconds": scraping_time,
                 "timestamp": datetime.utcnow().isoformat(),
-                "framework": "FastAPI",
-                "extracted_sections": {
-                    "basic_info": bool(profile_data.get('name')),
-                    "about": bool(profile_data.get('about') and profile_data['about'] != 'Not found'),
-                    "experience": len(profile_data.get('experience', [])),
-                    "education": len(profile_data.get('education', [])),
-                    "skills": len(profile_data.get('skills', []))
-                }
+                "framework": "FastAPI"
             }
-        )
-        
-        # Save to file if requested (background task)
-        if request.save_to_file:
-            def save_file():
-                try:
-                    filepath = scraper.save_data(profile_data)
-                    if filepath:
-                        response.metadata["saved_to_file"] = filepath
-                except Exception as e:
-                    response.metadata["file_save_error"] = str(e)
-            
-            background_tasks.add_task(save_file)
+        }
         
         return response
     
