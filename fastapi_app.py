@@ -307,6 +307,72 @@ async def scrape_profile_simple(request: ScrapeRequest):
         "scraper_error": SCRAPER_ERROR
     }
 
+@app.post("/api/scrape-debug", tags=["Debug"])
+async def scrape_debug_endpoint(request: ScrapeRequest):
+    """Debug scrape endpoint with detailed logging"""
+    try:
+        # Check if scraper is available
+        if not SCRAPER_AVAILABLE:
+            return {
+                "status": "error",
+                "message": f"Scraper not available: {SCRAPER_ERROR}",
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        
+        # Get scraper instance
+        try:
+            scraper = get_scraper()
+            debug_info = {
+                "scraper_created": True,
+                "scraper_type": str(type(scraper))
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"Failed to initialize scraper: {str(e)}",
+                "profile_url": request.profile_url,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        
+        # Test Chrome/ChromeDriver setup
+        try:
+            # Try to create a driver instance
+            test_driver = scraper.setup_driver()
+            if test_driver:
+                debug_info["driver_created"] = True
+                debug_info["driver_type"] = str(type(test_driver))
+                # Close the test driver
+                test_driver.quit()
+            else:
+                debug_info["driver_created"] = False
+        except Exception as e:
+            debug_info["driver_error"] = str(e)
+        
+        # Check LinkedIn credentials
+        import os
+        linkedin_email = os.getenv('LINKEDIN_EMAIL')
+        linkedin_password = os.getenv('LINKEDIN_PASSWORD')
+        debug_info["credentials"] = {
+            "email_set": bool(linkedin_email),
+            "password_set": bool(linkedin_password),
+            "email_length": len(linkedin_email) if linkedin_email else 0
+        }
+        
+        return {
+            "status": "debug",
+            "message": "Scraper debug info",
+            "profile_url": request.profile_url,
+            "debug_info": debug_info,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Debug failed: {str(e)}",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
 @app.post("/api/scrape", tags=["Scraping"])
 async def scrape_profile(request: ScrapeRequest):
     """
